@@ -1,0 +1,16 @@
+[package]
+name = "xtri"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+
+[dependencies]
+
+[dev-dependencies]
+criterion = "0.5"
+fake = "2.9"
+rand = "0.8"
+
+[[bench]]
+name = "benchmarks"
+harness = false
