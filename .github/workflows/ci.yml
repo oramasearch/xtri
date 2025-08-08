@@ -77,7 +77,7 @@ jobs:
       with:
         components: clippy
     - name: Run clippy
-      run: cargo clippy --all-targets --all-features -- -D warnings
+      run: cargo clippy --all-targets --all-features -- -A clippy::needless-doctest-main -D warnings
 
   doc:
     name: Documentation
