@@ -1,5 +1,9 @@
 # xtri
 
+[![Crates.io](https://img.shields.io/crates/v/xtri)](https://crates.io/crates/xtri)
+[![Documentation](https://docs.rs/xtri/badge.svg)](https://docs.rs/xtri)
+[![CI](https://github.com/oramasearch/xtri/actions/workflows/ci.yml/badge.svg)](https://github.com/oramasearch/xtri/actions/workflows/ci.yml)
+
 A Rust library that implements a radix tree (compressed trie) data structure for efficient string storage and prefix-based searching.
 
 ## Features
