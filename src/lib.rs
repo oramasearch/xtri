@@ -181,6 +181,33 @@ impl<T> RadixTree<T> {
         self.search_iter(key, mode).map(|(_, value)| value)
     }
 
+    /// Returns an iterator over only the leaf nodes of the radix tree.
+    ///
+    /// A leaf node is defined as a node that has a value but no children,
+    /// representing the end of a key path with no further extensions.
+    /// This provides lazy traversal with memory usage of O(tree depth).
+    /// Results are returned in alphabetical order.
+    ///
+    /// # Returns
+    /// An iterator that yields (key, value_reference) tuples for all leaf nodes.
+    ///
+    /// # Examples
+    /// ```
+    /// use xtri::RadixTree;
+    /// let mut tree = RadixTree::new();
+    /// tree.insert("hello", 1);
+    /// tree.insert("help", 2);
+    /// tree.insert("world", 3);
+    /// tree.insert("he", 4);  // Not a leaf (has children: hello, help)
+    ///
+    /// let leaves: Vec<_> = tree.iter_leaves().collect();
+    /// // Returns only nodes with no children: [("hello", &1), ("help", &2), ("world", &3)]
+    /// // "he" is not included because it has children
+    /// ```
+    pub fn iter_leaves(&self) -> LeavesIterator<T> {
+        LeavesIterator::new(&self.root)
+    }
+
     /// Provides mutable access to the value associated with the given key through a closure.
     ///
     /// The closure receives a `&mut Option<T>` allowing you to read, modify, or create the value.
@@ -527,6 +554,72 @@ impl<'a, T> Iterator for SearchIterator<'a, T> {
     fn size_hint(&self) -> (usize, Option<usize>) {
         // Cannot determine size without traversing, provide conservative estimate
         (0, None)
+    }
+}
+
+/// Iterator for traversing only the leaf nodes of a radix tree.
+///
+/// A leaf node is defined as a node that has a value but no children,
+/// representing the end of a key path with no further extensions.
+/// This iterator performs lazy traversal using a stack-based approach.
+/// Memory usage is O(tree depth) storing only node references and child indices.
+pub struct LeavesIterator<'a, T> {
+    // Stack of (node, child_index, current_key) pairs for traversal state
+    stack: Vec<(&'a RadixNode<T>, usize, Vec<u8>)>,
+}
+
+impl<'a, T> LeavesIterator<'a, T> {
+    fn new(root: &'a RadixNode<T>) -> Self {
+        let mut iterator = Self { stack: Vec::new() };
+
+        // Start traversal from the root with empty key
+        iterator.stack.push((root, 0, Vec::new()));
+        iterator
+    }
+}
+
+impl<'a, T> Iterator for LeavesIterator<'a, T> {
+    type Item = (Vec<u8>, &'a T);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        loop {
+            let (node, child_index, current_key) = self.stack.pop()?;
+
+            // If this is the first visit to this node (child_index == 0), check if it's a leaf
+            if child_index == 0 {
+                // A leaf node has a value and no children
+                if let Some(ref value) = node.value {
+                    if node.children.is_empty() {
+                        // This is a leaf node - return it
+                        return Some((current_key.clone(), value));
+                    }
+                }
+
+                // Not a leaf or no value, start processing children
+                if !node.children.is_empty() {
+                    self.stack.push((node, 1, current_key));
+                }
+                continue;
+            }
+
+            // Processing children: child_index - 1 is the current child being processed
+            let current_child_idx = child_index - 1;
+
+            if current_child_idx < node.children.len() {
+                // Push the next child index for this node
+                if current_child_idx + 1 < node.children.len() {
+                    self.stack
+                        .push((node, child_index + 1, current_key.clone()));
+                }
+
+                // Push the current child to be processed
+                let (_, child) = &node.children[current_child_idx];
+                let mut child_key = current_key;
+                child_key.extend_from_slice(&child.key);
+
+                self.stack.push((child, 0, child_key));
+            }
+        }
     }
 }
 
@@ -1593,5 +1686,185 @@ mod tests {
         for (i, (_, expected_value)) in iter_results.iter().enumerate() {
             assert_eq!(*expected_value, iter_value_results[i]);
         }
+    }
+
+    #[test]
+    fn test_iter_leaves_simple() {
+        let mut tree = RadixTree::new();
+
+        tree.insert("h", 1);
+        tree.insert("ho", 2);
+        tree.insert("house", 3);
+
+        let leaves: Vec<_> = tree
+            .iter_leaves()
+            .map(|(key, value)| (String::from_utf8_lossy(&key).to_string(), value))
+            .collect();
+
+        assert_eq!(leaves, vec![("house".to_string(), &3)]);
+    }
+
+    #[test]
+    fn test_iter_leaves_multiple() {
+        let mut tree = RadixTree::new();
+
+        tree.insert("h", 1);
+        tree.insert("ho", 2);
+        tree.insert("house", 3);
+        tree.insert("home", 4);
+
+        let leaves: Vec<_> = tree
+            .iter_leaves()
+            .map(|(key, value)| (String::from_utf8_lossy(&key).to_string(), value))
+            .collect();
+
+        // Both "house" and "home" should be leaves (alphabetical order)
+        assert_eq!(
+            leaves,
+            vec![("home".to_string(), &4), ("house".to_string(), &3)]
+        );
+    }
+
+    #[test]
+    fn test_iter_leaves_empty_tree() {
+        let tree: RadixTree<i32> = RadixTree::new();
+
+        let leaves: Vec<_> = tree.iter_leaves().collect();
+
+        assert_eq!(leaves.len(), 0);
+    }
+
+    #[test]
+    fn test_iter_leaves_single_node() {
+        let mut tree = RadixTree::new();
+        tree.insert("single", 42);
+
+        let leaves: Vec<_> = tree
+            .iter_leaves()
+            .map(|(key, value)| (String::from_utf8_lossy(&key).to_string(), value))
+            .collect();
+
+        assert_eq!(leaves, vec![("single".to_string(), &42)]);
+    }
+
+    #[test]
+    fn test_iter_leaves_all_leaves() {
+        let mut tree = RadixTree::new();
+
+        // Insert keys with no overlapping prefixes
+        tree.insert("apple", 1);
+        tree.insert("banana", 2);
+        tree.insert("cherry", 3);
+        tree.insert("date", 4);
+
+        let leaves: Vec<_> = tree
+            .iter_leaves()
+            .map(|(key, value)| (String::from_utf8_lossy(&key).to_string(), value))
+            .collect();
+
+        // All keys should be leaves since they don't overlap
+        assert_eq!(
+            leaves,
+            vec![
+                ("apple".to_string(), &1),
+                ("banana".to_string(), &2),
+                ("cherry".to_string(), &3),
+                ("date".to_string(), &4)
+            ]
+        );
+    }
+
+    #[test]
+    fn test_iter_leaves_alphabetical_order() {
+        let mut tree = RadixTree::new();
+
+        // Insert in non-alphabetical order
+        tree.insert("zebra", 1);
+        tree.insert("apple", 2);
+        tree.insert("banana", 3);
+        tree.insert("cherry", 4);
+
+        let leaves: Vec<_> = tree
+            .iter_leaves()
+            .map(|(key, value)| (String::from_utf8_lossy(&key).to_string(), value))
+            .collect();
+
+        // Should be returned in alphabetical order
+        assert_eq!(
+            leaves,
+            vec![
+                ("apple".to_string(), &2),
+                ("banana".to_string(), &3),
+                ("cherry".to_string(), &4),
+                ("zebra".to_string(), &1)
+            ]
+        );
+    }
+
+    #[test]
+    fn test_iter_leaves_utf8() {
+        let mut tree = RadixTree::new();
+
+        // Insert UTF-8 keys
+        tree.insert("café", 1);
+        tree.insert("🚀", 2);
+        tree.insert("naïve", 3);
+        tree.insert("🌟", 4);
+
+        let leaves: Vec<_> = tree
+            .iter_leaves()
+            .map(|(key, value)| (String::from_utf8_lossy(&key).to_string(), value))
+            .collect();
+
+        // Should handle UTF-8 correctly and return in byte order
+        assert_eq!(leaves.len(), 4);
+        assert!(leaves.iter().any(|(k, v)| k == "café" && **v == 1));
+        assert!(leaves.iter().any(|(k, v)| k == "🚀" && **v == 2));
+        assert!(leaves.iter().any(|(k, v)| k == "naïve" && **v == 3));
+        assert!(leaves.iter().any(|(k, v)| k == "🌟" && **v == 4));
+    }
+
+    #[test]
+    fn test_iter_leaves_large_tree() {
+        let mut tree = RadixTree::new();
+
+        // Insert many keys with various prefix relationships
+        let keys = [
+            "a",
+            "ab",
+            "abc",
+            "abcd", // Only "abcd" should be leaf
+            "test",
+            "testing",
+            "tester", // "testing" and "tester" should be leaves
+            "app",
+            "application", // Only "application" should be leaf
+            "x",
+            "y",
+            "z", // All should be leaves (no children)
+        ];
+
+        for (i, key) in keys.iter().enumerate() {
+            tree.insert(key, i as i32);
+        }
+
+        let leaves: Vec<_> = tree
+            .iter_leaves()
+            .map(|(key, value)| (String::from_utf8_lossy(&key).to_string(), value))
+            .collect();
+
+        // Expected leaves: "abcd", "application", "tester", "testing", "x", "y", "z"
+        let expected_leaves = vec!["abcd", "application", "tester", "testing", "x", "y", "z"];
+
+        assert_eq!(leaves.len(), expected_leaves.len());
+        for expected_key in expected_leaves {
+            assert!(leaves.iter().any(|(k, _)| k == expected_key));
+        }
+
+        // Verify alphabetical ordering
+        let leaf_keys: Vec<String> = leaves.iter().map(|(k, _)| k.clone()).collect();
+        let mut sorted_keys = leaf_keys.clone();
+        sorted_keys.sort();
+        assert_eq!(leaf_keys, sorted_keys);
     }
 }
