@@ -1,6 +1,6 @@
 [package]
 name = "xtri"
-version = "0.1.1"
+version = "0.1.2"
 edition = "2024"
 license = "MIT"
 description = "A fast, memory-efficient radix tree (compressed trie) implementation in Rust with UTF-8 support"
