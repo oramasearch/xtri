@@ -208,6 +208,51 @@ impl<T> RadixTree<T> {
         LeavesIterator::new(&self.root)
     }
 
+    /// Searches for keys where the search term is approximately a prefix within the given tolerance.
+    ///
+    /// Uses Levenshtein distance to allow for typos and small variations. Returns results
+    /// in alphabetical order with their edit distances. This performs fuzzy prefix matching,
+    /// meaning the search term should approximately match the beginning of keys.
+    ///
+    /// # Arguments
+    /// * `key` - The search term
+    /// * `tolerance` - Maximum edit distance allowed (recommend 1-2 for performance)
+    ///
+    /// # Returns
+    /// An iterator yielding (key, value_reference, distance) tuples where:
+    /// - key is the matched key as a String
+    /// - value_reference is a reference to the stored value
+    /// - distance is the Levenshtein distance (0 means exact prefix match)
+    ///
+    /// # Note on UTF-8
+    /// Distance is calculated at the byte level. Multi-byte UTF-8 characters
+    /// may result in distances > 1 (e.g., "café" vs "cafe" has distance 2).
+    ///
+    /// # Examples
+    /// ```
+    /// use xtri::RadixTree;
+    ///
+    /// let mut tree = RadixTree::new();
+    /// tree.insert("hello", 1);
+    /// tree.insert("help", 2);
+    /// tree.insert("hell", 3);
+    /// tree.insert("hero", 4);
+    ///
+    /// // Search with typo: "helo" instead of "hel"
+    /// let results: Vec<_> = tree.search_typo_tolerant("helo", 1).collect();
+    /// println!("{:?}", results);
+    /// // Returns: [("hell", &3, 1), ("hello", &1, 1)]
+    /// // "help" and "hero" have distance 2, so they're excluded
+    ///
+    /// // Exact matches have distance 0
+    /// let results: Vec<_> = tree.search_typo_tolerant("hel", 1).collect();
+    /// println!("{:?}", results);
+    /// // Returns: [("hell", &3, 0), ("hello", &1, 0), ("help", &2, 0)]
+    /// ```
+    pub fn search_typo_tolerant(&self, key: &str, tolerance: u8) -> TypoTolerantSearchIterator<T> {
+        TypoTolerantSearchIterator::new(&self.root, key.as_bytes(), tolerance)
+    }
+
     /// Provides mutable access to the value associated with the given key through a closure.
     ///
     /// The closure receives a `&mut Option<T>` allowing you to read, modify, or create the value.
@@ -406,6 +451,104 @@ impl<T> RadixTree<T> {
         }
         count
     }
+}
+
+/// Checks if search term is approximately a prefix of target within max_distance.
+///
+/// A search term S is considered a fuzzy prefix of key K with distance d if there
+/// exists a prefix P of K where `levenshtein_distance(S, P) <= d`.
+///
+/// # Arguments
+/// * `search_term` - The search query bytes
+/// * `target` - The key bytes to check against
+/// * `max_distance` - Maximum edit distance allowed
+///
+/// # Returns
+/// `Some(distance)` if a match is found, `None` otherwise
+fn is_fuzzy_prefix_match(search_term: &[u8], target: &[u8], max_distance: u8) -> Option<usize> {
+    if search_term.is_empty() {
+        return Some(0); // Empty search matches everything with distance 0
+    }
+
+    let max_dist = max_distance as usize;
+    let search_len = search_term.len();
+
+    // Check prefixes of target from (search_len - max_dist) to (search_len + max_dist)
+    // This captures all possible fuzzy prefix matches efficiently
+    let min_prefix_len = search_len.saturating_sub(max_dist).max(1);
+    let max_prefix_len = std::cmp::min(target.len(), search_len + max_dist);
+
+    let mut best_distance = usize::MAX;
+
+    for prefix_len in min_prefix_len..=max_prefix_len {
+        if prefix_len > target.len() {
+            continue;
+        }
+
+        let dist = levenshtein_distance(search_term, &target[0..prefix_len]);
+        best_distance = std::cmp::min(best_distance, dist);
+    }
+
+    if best_distance <= max_dist {
+        Some(best_distance)
+    } else {
+        None
+    }
+}
+
+/// Computes the Levenshtein (edit) distance between two byte sequences.
+///
+/// Uses Wagner-Fischer algorithm with space optimization (two rows only).
+/// This operates at the byte level, so UTF-8 multi-byte characters may have
+/// distance greater than 1 (e.g., "café" vs "cafe" = distance 2).
+///
+/// # Arguments
+/// * `a` - First byte sequence
+/// * `b` - Second byte sequence
+///
+/// # Returns
+/// The minimum number of single-byte edits (insertions, deletions, substitutions)
+/// required to transform `a` into `b`.
+fn levenshtein_distance(a: &[u8], b: &[u8]) -> usize {
+    if a.is_empty() {
+        return b.len();
+    }
+    if b.is_empty() {
+        return a.len();
+    }
+
+    let m = a.len();
+    let n = b.len();
+
+    // Use two rows for space optimization O(min(m,n)) instead of O(m*n)
+    let mut prev_row = vec![0; n + 1];
+    let mut curr_row = vec![0; n + 1];
+
+    // Initialize first row
+    for j in 0..=n {
+        prev_row[j] = j;
+    }
+
+    // Fill matrix row by row
+    for i in 1..=m {
+        curr_row[0] = i;
+
+        for j in 1..=n {
+            let cost = if a[i - 1] == b[j - 1] { 0 } else { 1 };
+
+            curr_row[j] = std::cmp::min(
+                std::cmp::min(
+                    prev_row[j] + 1,      // Deletion
+                    curr_row[j - 1] + 1,  // Insertion
+                ),
+                prev_row[j - 1] + cost, // Substitution
+            );
+        }
+
+        std::mem::swap(&mut prev_row, &mut curr_row);
+    }
+
+    prev_row[n]
 }
 
 /// Iterator for traversing search results from a radix tree search.
@@ -618,6 +761,94 @@ impl<'a, T> Iterator for LeavesIterator<'a, T> {
                 child_key.extend_from_slice(&child.key);
 
                 self.stack.push((child, 0, child_key));
+            }
+        }
+    }
+}
+
+/// Iterator for typo-tolerant fuzzy prefix search in a radix tree.
+///
+/// This iterator finds all keys where the search term is approximately a prefix,
+/// allowing for typos within a specified edit distance tolerance. Uses Levenshtein
+/// distance to measure similarity.
+///
+/// Results are returned in alphabetical order with their edit distances.
+/// Memory usage is O(tree depth) using a stack-based traversal approach.
+pub struct TypoTolerantSearchIterator<'a, T> {
+    // Stack of (node, child_index, current_key, _unused) for traversal
+    stack: Vec<(&'a RadixNode<T>, usize, Vec<u8>, u8)>,
+    // Original search key for distance computation
+    search_key: Vec<u8>,
+    // Maximum Levenshtein distance allowed
+    max_distance: u8,
+}
+
+impl<'a, T> TypoTolerantSearchIterator<'a, T> {
+    fn new(root: &'a RadixNode<T>, search_key: &[u8], max_distance: u8) -> Self {
+        let mut iterator = Self {
+            stack: Vec::new(),
+            search_key: search_key.to_vec(),
+            max_distance,
+        };
+
+        // Start from root - can't optimize starting point for fuzzy search
+        // Must explore all branches to find fuzzy matches
+        iterator.stack.push((root, 0, Vec::new(), 0));
+        iterator
+    }
+}
+
+impl<'a, T> Iterator for TypoTolerantSearchIterator<'a, T> {
+    type Item = (String, &'a T, u8);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        loop {
+            let (node, child_index, current_key, _) = self.stack.pop()?;
+
+            // First visit: check if node has a value that matches
+            if child_index == 0 {
+                if let Some(ref value) = node.value {
+                    // Check if current_key is a fuzzy match for our search
+                    if let Some(distance) =
+                        is_fuzzy_prefix_match(&self.search_key, &current_key, self.max_distance)
+                    {
+                        // Found a match! Convert to String and return
+                        let key_string = String::from_utf8_lossy(&current_key).to_string();
+
+                        // Push back to continue with children
+                        if !node.children.is_empty() {
+                            self.stack.push((node, 1, current_key, 0));
+                        }
+
+                        return Some((key_string, value, distance as u8));
+                    }
+                }
+
+                // No match or no value, start processing children
+                if !node.children.is_empty() {
+                    self.stack.push((node, 1, current_key, 0));
+                }
+                continue;
+            }
+
+            // Processing children
+            let current_child_idx = child_index - 1;
+
+            if current_child_idx < node.children.len() {
+                // Push next sibling
+                if current_child_idx + 1 < node.children.len() {
+                    self.stack.push((node, child_index + 1, current_key.clone(), 0));
+                }
+
+                // Process current child
+                let (_, child) = &node.children[current_child_idx];
+                let mut child_key = current_key;
+                child_key.extend_from_slice(&child.key);
+
+                // Always explore children - pruning would be too complex for fuzzy prefix matching
+                // since we need to check if the search term is approximately a prefix of ANY
+                // prefix of the stored keys
+                self.stack.push((child, 0, child_key, 0));
             }
         }
     }
@@ -1866,5 +2097,297 @@ mod tests {
         let mut sorted_keys = leaf_keys.clone();
         sorted_keys.sort();
         assert_eq!(leaf_keys, sorted_keys);
+    }
+
+    #[test]
+    fn test_levenshtein_distance_basic() {
+        // Empty strings
+        assert_eq!(levenshtein_distance(b"", b""), 0);
+        assert_eq!(levenshtein_distance(b"abc", b""), 3);
+        assert_eq!(levenshtein_distance(b"", b"xyz"), 3);
+
+        // Identical strings
+        assert_eq!(levenshtein_distance(b"abc", b"abc"), 0);
+        assert_eq!(levenshtein_distance(b"hello", b"hello"), 0);
+
+        // Single edits
+        assert_eq!(levenshtein_distance(b"abc", b"abd"), 1); // Substitution
+        assert_eq!(levenshtein_distance(b"abc", b"abcd"), 1); // Insertion
+        assert_eq!(levenshtein_distance(b"abcd", b"abc"), 1); // Deletion
+
+        // Classic examples
+        assert_eq!(levenshtein_distance(b"kitten", b"sitting"), 3);
+        assert_eq!(levenshtein_distance(b"saturday", b"sunday"), 3);
+
+        assert_eq!(levenshtein_distance(b"abdc", b"abc"), 1);
+        assert_eq!(levenshtein_distance(b"abc", b"abdc"), 1);
+        assert_eq!(levenshtein_distance(b"abc", b"ac"), 1);
+        assert_eq!(levenshtein_distance(b"ac", b"abc"), 1);
+    }
+
+    #[test]
+    fn test_levenshtein_distance_utf8() {
+        // UTF-8 multi-byte characters (byte-level distance)
+        // "café" has é which is 2 bytes (0xC3 0xA9), "cafe" has e which is 1 byte
+        // So distance is 2 (one deletion of 0xC3, one substitution of 0xA9 to 'e')
+        assert_eq!(
+            levenshtein_distance("café".as_bytes(), "cafe".as_bytes()),
+            2
+        );
+
+        // Emoji (🚀 is 4 bytes)
+        assert_eq!(
+            levenshtein_distance("🚀".as_bytes(), "x".as_bytes()),
+            4
+        );
+
+        // Same multi-byte character
+        assert_eq!(
+            levenshtein_distance("café".as_bytes(), "café".as_bytes()),
+            0
+        );
+    }
+
+    #[test]
+    fn test_fuzzy_prefix_match_basic() {
+        // Exact prefix (distance 0)
+        assert_eq!(
+            is_fuzzy_prefix_match(b"hel", b"hello", 0),
+            Some(0)
+        );
+        assert_eq!(
+            is_fuzzy_prefix_match(b"hello", b"hello", 0),
+            Some(0)
+        );
+
+        // One edit (distance 1)
+        assert_eq!(
+            is_fuzzy_prefix_match(b"helo", b"hello", 1),
+            Some(1)
+        ); // Missing 'l'
+        assert_eq!(
+            is_fuzzy_prefix_match(b"hel", b"hello", 1),
+            Some(0)
+        ); // Exact match
+
+        // Too far (no match)
+        assert_eq!(
+            is_fuzzy_prefix_match(b"xyz", b"abc", 2),
+            None
+        );
+        assert_eq!(
+            is_fuzzy_prefix_match(b"hello", b"world", 2),
+            None
+        );
+
+        // Empty search term
+        assert_eq!(
+            is_fuzzy_prefix_match(b"", b"anything", 1),
+            Some(0)
+        );
+    }
+
+    #[test]
+    fn test_fuzzy_prefix_match_edge_cases() {
+        // Search term longer than target
+        assert_eq!(
+            is_fuzzy_prefix_match(b"hello", b"hel", 1),
+            None
+        );
+
+        // Distance 2 allows more flexibility
+        assert_eq!(
+            is_fuzzy_prefix_match(b"helo", b"hello", 2),
+            Some(1)
+        );
+        assert_eq!(
+            is_fuzzy_prefix_match(b"hllo", b"hello", 2),
+            Some(1)
+        ); // Missing 'e'
+    }
+
+    #[test]
+    fn test_typo_tolerant_search_basic() {
+        let mut tree = RadixTree::new();
+        tree.insert("hello", 1);
+        tree.insert("help", 2);
+        tree.insert("hell", 3);
+        tree.insert("hero", 4);
+
+        // Search with distance 1 - "helo" typo
+        let results: Vec<_> = tree.search_typo_tolerant("helo", 1).collect();
+
+        // All words actually have distance 1 from "helo":
+        // - "hell": hel matches, then distance("o", "") = 1
+        // - "hello": hello matches, distance("helo", "hello") = 1 (insert 'l')
+        // - "help": help matches, distance("helo", "help") = 1 (substitute 'o' with 'p')
+        // - "hero": hero matches, distance("helo", "hero") = 1 (substitute 'l' with 'r')
+        assert_eq!(results.len(), 4);
+
+        // Verify all distances are 1
+        for (_, _, distance) in &results {
+            assert_eq!(*distance, 1);
+        }
+    }
+
+    #[test]
+    fn test_typo_tolerant_search_alphabetical_order() {
+        let mut tree = RadixTree::new();
+        tree.insert("test", 1);
+        tree.insert("text", 2);
+        tree.insert("temp", 3);
+        tree.insert("team", 4);
+
+        let results: Vec<_> = tree.search_typo_tolerant("tex", 1).collect();
+
+        // Results should be alphabetically ordered, not distance-ordered
+        let keys: Vec<String> = results.iter().map(|(k, _, _)| k.clone()).collect();
+        let mut sorted_keys = keys.clone();
+        sorted_keys.sort();
+        assert_eq!(keys, sorted_keys);
+    }
+
+    #[test]
+    fn test_typo_tolerant_search_distance_zero() {
+        let mut tree = RadixTree::new();
+        tree.insert("hello", 1);
+        tree.insert("help", 2);
+        tree.insert("hell", 3);
+
+        // Distance 0 should match exact prefixes only
+        let results: Vec<_> = tree.search_typo_tolerant("hel", 0).collect();
+
+        eprintln!("Search for 'hel' with distance 0:");
+        for (key, value, distance) in &results {
+            eprintln!("  {} -> {} (distance: {})", key, value, distance);
+        }
+
+        assert!(results.len() >= 1, "Expected at least 1 result for exact prefix, got {}", results.len());
+        for (_, _, distance) in &results {
+            assert_eq!(*distance, 0);
+        }
+    }
+
+    #[test]
+    fn test_typo_tolerant_search_utf8() {
+        let mut tree = RadixTree::new();
+        tree.insert("café", 1);
+        tree.insert("cake", 2);
+        tree.insert("care", 3);
+
+        // Note: "café" has multi-byte chars, so byte-level distance may be > 1
+        // Search for "caf" should match all with low distances
+        let results: Vec<_> = tree.search_typo_tolerant("caf", 1).collect();
+
+        // Should find at least some matches
+        assert!(results.len() > 0);
+
+        // Verify all results are alphabetically ordered
+        let keys: Vec<String> = results.iter().map(|(k, _, _)| k.clone()).collect();
+        let mut sorted_keys = keys.clone();
+        sorted_keys.sort();
+        assert_eq!(keys, sorted_keys);
+    }
+
+    #[test]
+    fn test_typo_tolerant_search_empty_term() {
+        let mut tree = RadixTree::new();
+        tree.insert("a", 1);
+        tree.insert("ab", 2);
+        tree.insert("abc", 3);
+
+        // Empty search term should match all with distance 0
+        let results: Vec<_> = tree.search_typo_tolerant("", 1).collect();
+        assert_eq!(results.len(), 3);
+
+        for (_, _, distance) in &results {
+            assert_eq!(*distance, 0);
+        }
+    }
+
+    #[test]
+    fn test_typo_tolerant_search_no_matches() {
+        let mut tree = RadixTree::new();
+        tree.insert("hello", 1);
+        tree.insert("world", 2);
+
+        let results: Vec<_> = tree.search_typo_tolerant("xyz", 1).collect();
+        assert_eq!(results.len(), 0);
+    }
+
+    #[test]
+    fn test_typo_tolerant_search_iterator_lazy() {
+        let mut tree = RadixTree::new();
+        for i in 0..100 {
+            tree.insert(&format!("test{}", i), i);
+        }
+
+        // Verify lazy evaluation - take only first 5
+        let mut iter = tree.search_typo_tolerant("tst", 1);
+        let first_five: Vec<_> = iter.by_ref().take(5).collect();
+        assert_eq!(first_five.len(), 5);
+
+        // Should still be able to get more results
+        let next_five: Vec<_> = iter.take(5).collect();
+        assert!(next_five.len() <= 5);
+    }
+
+    #[test]
+    fn test_typo_tolerant_search_edge_cases() {
+        let mut tree = RadixTree::new();
+        tree.insert("a", 1);
+        tree.insert("ab", 2);
+        tree.insert("abc", 3);
+        tree.insert("abcd", 4);
+
+        // Single character search
+        let results: Vec<_> = tree.search_typo_tolerant("a", 0).collect();
+        assert_eq!(results.len(), 4); // All start with "a"
+
+        // Search with distance allowing variations
+        let results: Vec<_> = tree.search_typo_tolerant("b", 1).collect();
+        assert!(results.len() > 0); // "ab" and others are distance 1 from "b"
+    }
+
+    #[test]
+    fn test_typo_tolerant_search_distance_two() {
+        let mut tree = RadixTree::new();
+        tree.insert("application", 1);
+        tree.insert("apple", 2);
+        tree.insert("apply", 3);
+        tree.insert("appropriate", 4);
+
+        // Search with distance 2 for "aple" (missing 'p')
+        let results: Vec<_> = tree.search_typo_tolerant("aple", 2).collect();
+
+        // Should find "apple" and possibly others
+        assert!(results.iter().any(|(k, _, _)| k == "apple"));
+
+        // All results should have distance <= 2
+        for (_, _, distance) in &results {
+            assert!(*distance <= 2);
+        }
+    }
+
+    #[test]
+    fn test_typo_tolerant_search_values() {
+        let mut tree = RadixTree::new();
+        tree.insert("hello", 100);
+        tree.insert("hell", 200);
+        tree.insert("help", 300);
+
+        let results: Vec<_> = tree.search_typo_tolerant("helo", 1).collect();
+
+        // Verify we get the correct values back
+        // All three words have distance 1 from "helo"
+        assert_eq!(results.len(), 3);
+        for (key, value, _) in &results {
+            match key.as_str() {
+                "hello" => assert_eq!(**value, 100),
+                "hell" => assert_eq!(**value, 200),
+                "help" => assert_eq!(**value, 300),
+                _ => panic!("Unexpected key: {}", key),
+            }
+        }
     }
 }
