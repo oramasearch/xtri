@@ -31,26 +31,45 @@ fn main() {
     tree.insert("approach", "method");
     tree.insert("appropriate", "suitable");
 
-    // Search by prefix - returns all keys starting with "app"
+    println!("Search 'app' by prefix");
     let iter = tree.search_iter("app", SearchMode::Prefix);
     for (key, value) in iter {
         println!("  {} -> {}", String::from_utf8_lossy(&key), value);
     }
     // Output:
-    //   apple: fruit
-    //   application: main app
-    //   apply: verb
+    // Search 'app' by prefix
+    //   app -> short form
+    //   apple -> fruit
+    //   application -> main app
+    //   apply -> verb
+    //   approach -> method
+    //   appropriate -> suitable
 
     // Update existing value or create a new one
     tree.mut_value("app", |value| {
         *value = Some("short form");
     });
 
+    println!("Search exactly 'app'");
     let iter = tree.search_iter("app", SearchMode::Exact);
     for (key, value) in iter {
         println!("  {} -> {}", String::from_utf8_lossy(&key), value);
     }
     // Output:
     //   app -> short form
+
+    println!("Search 'app' with tolerance");
+    let iter = tree.search_with_tolerance("apl", 1);
+    for (key, value, distance) in iter {
+        println!("  {} -> {} (distance={})", key, value, distance);
+    }
+    // Output:
+    // Search 'app' with tolerance
+    //   app -> short form (distance=1)
+    //   apple -> fruit (distance=1)
+    //   application -> main app (distance=1)
+    //   apply -> verb (distance=1)
+    //   approach -> method (distance=1)
+    //   appropriate -> suitable (distance=1)
 }
 ```
