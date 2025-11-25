@@ -453,6 +453,12 @@ impl<T> RadixTree<T> {
     }
 }
 
+#[derive(Default)]
+struct BufferCache {
+    prev_row: Vec<usize>,
+    curr_row: Vec<usize>,
+}
+
 /// Checks if search term is approximately a prefix of target within max_distance.
 ///
 /// A search term S is considered a fuzzy prefix of key K with distance d if there
@@ -465,7 +471,7 @@ impl<T> RadixTree<T> {
 ///
 /// # Returns
 /// `Some(distance)` if a match is found, `None` otherwise
-fn is_fuzzy_prefix_match(search_term: &[u8], target: &[u8], max_distance: u8) -> Option<usize> {
+fn is_fuzzy_prefix_match(search_term: &[u8], target: &[u8], max_distance: u8, cache: &mut BufferCache) -> Option<usize> {
     if search_term.is_empty() {
         return Some(0); // Empty search matches everything with distance 0
     }
@@ -485,7 +491,7 @@ fn is_fuzzy_prefix_match(search_term: &[u8], target: &[u8], max_distance: u8) ->
             continue;
         }
 
-        let dist = levenshtein_distance(search_term, &target[0..prefix_len]);
+        let dist = levenshtein_distance(search_term, &target[0..prefix_len], cache);
         best_distance = std::cmp::min(best_distance, dist);
     }
 
@@ -509,7 +515,7 @@ fn is_fuzzy_prefix_match(search_term: &[u8], target: &[u8], max_distance: u8) ->
 /// # Returns
 /// The minimum number of single-byte edits (insertions, deletions, substitutions)
 /// required to transform `a` into `b`.
-fn levenshtein_distance(a: &[u8], b: &[u8]) -> usize {
+fn levenshtein_distance(a: &[u8], b: &[u8], cache: &mut BufferCache) -> usize {
     if a.is_empty() {
         return b.len();
     }
@@ -521,8 +527,14 @@ fn levenshtein_distance(a: &[u8], b: &[u8]) -> usize {
     let n = b.len();
 
     // Use two rows for space optimization O(min(m,n)) instead of O(m*n)
-    let mut prev_row = vec![0; n + 1];
-    let mut curr_row = vec![0; n + 1];
+    let prev_row = &mut cache.prev_row;
+    let curr_row = &mut cache.curr_row;
+    if prev_row.len() < n + 1 {
+        prev_row.resize(n + 1, 0);
+    }
+    if curr_row.len() < n + 1 {
+        curr_row.resize(n + 1, 0);
+    }
 
     // Initialize first row
     for j in 0..=n {
@@ -545,7 +557,7 @@ fn levenshtein_distance(a: &[u8], b: &[u8]) -> usize {
             );
         }
 
-        std::mem::swap(&mut prev_row, &mut curr_row);
+        std::mem::swap(prev_row, curr_row);
     }
 
     prev_row[n]
@@ -781,6 +793,8 @@ pub struct TypoTolerantSearchIterator<'a, T> {
     search_key: Vec<u8>,
     // Maximum Levenshtein distance allowed
     max_distance: u8,
+    // Buffer cache for distance computations
+    cache: BufferCache,
 }
 
 impl<'a, T> TypoTolerantSearchIterator<'a, T> {
@@ -789,6 +803,7 @@ impl<'a, T> TypoTolerantSearchIterator<'a, T> {
             stack: Vec::new(),
             search_key: search_key.to_vec(),
             max_distance,
+            cache: Default::default(),
         };
 
         // Start from root - can't optimize starting point for fuzzy search
@@ -810,7 +825,7 @@ impl<'a, T> Iterator for TypoTolerantSearchIterator<'a, T> {
                 if let Some(ref value) = node.value {
                     // Check if current_key is a fuzzy match for our search
                     if let Some(distance) =
-                        is_fuzzy_prefix_match(&self.search_key, &current_key, self.max_distance)
+                        is_fuzzy_prefix_match(&self.search_key, &current_key, self.max_distance, &mut self.cache)
                     {
                         // Found a match! Convert to String and return
                         let key_string = String::from_utf8_lossy(&current_key).to_string();
@@ -2101,109 +2116,119 @@ mod tests {
 
     #[test]
     fn test_levenshtein_distance_basic() {
+        let mut cache = BufferCache::default();
+
         // Empty strings
-        assert_eq!(levenshtein_distance(b"", b""), 0);
-        assert_eq!(levenshtein_distance(b"abc", b""), 3);
-        assert_eq!(levenshtein_distance(b"", b"xyz"), 3);
+        assert_eq!(levenshtein_distance(b"", b"", &mut cache), 0);
+        assert_eq!(levenshtein_distance(b"abc", b"", &mut cache), 3);
+        assert_eq!(levenshtein_distance(b"", b"xyz", &mut cache), 3);
 
         // Identical strings
-        assert_eq!(levenshtein_distance(b"abc", b"abc"), 0);
-        assert_eq!(levenshtein_distance(b"hello", b"hello"), 0);
-
+        assert_eq!(levenshtein_distance(b"abc", b"abc", &mut cache), 0);
+        assert_eq!(levenshtein_distance(b"hello", b"hello", &mut cache), 0);
         // Single edits
-        assert_eq!(levenshtein_distance(b"abc", b"abd"), 1); // Substitution
-        assert_eq!(levenshtein_distance(b"abc", b"abcd"), 1); // Insertion
-        assert_eq!(levenshtein_distance(b"abcd", b"abc"), 1); // Deletion
-
+        assert_eq!(levenshtein_distance(b"abc", b"abd", &mut cache), 1); // Substitution
+        assert_eq!(levenshtein_distance(b"abc", b"abcd", &mut cache), 1); // Insertion
+        assert_eq!(levenshtein_distance(b"abcd", b"abc", &mut cache), 1); // Deletion
         // Classic examples
-        assert_eq!(levenshtein_distance(b"kitten", b"sitting"), 3);
-        assert_eq!(levenshtein_distance(b"saturday", b"sunday"), 3);
+        assert_eq!(levenshtein_distance(b"kitten", b"sitting", &mut cache), 3);
+        assert_eq!(levenshtein_distance(b"saturday", b"sunday", &mut cache), 3);
 
-        assert_eq!(levenshtein_distance(b"abdc", b"abc"), 1);
-        assert_eq!(levenshtein_distance(b"abc", b"abdc"), 1);
-        assert_eq!(levenshtein_distance(b"abc", b"ac"), 1);
-        assert_eq!(levenshtein_distance(b"ac", b"abc"), 1);
+        assert_eq!(levenshtein_distance(b"abdc", b"abc", &mut cache), 1);
+        assert_eq!(levenshtein_distance(b"abc", b"abdc", &mut cache), 1);
+        assert_eq!(levenshtein_distance(b"abc", b"ac", &mut cache), 1);
+        assert_eq!(levenshtein_distance(b"ac", b"abc", &mut cache), 1);
     }
 
     #[test]
     fn test_levenshtein_distance_utf8() {
+        let mut cache = BufferCache::default();
+
         // UTF-8 multi-byte characters (byte-level distance)
         // "café" has é which is 2 bytes (0xC3 0xA9), "cafe" has e which is 1 byte
         // So distance is 2 (one deletion of 0xC3, one substitution of 0xA9 to 'e')
         assert_eq!(
-            levenshtein_distance("café".as_bytes(), "cafe".as_bytes()),
+            levenshtein_distance("café".as_bytes(), "cafe".as_bytes(), &mut cache),
             2
         );
 
         // Emoji (🚀 is 4 bytes)
         assert_eq!(
-            levenshtein_distance("🚀".as_bytes(), "x".as_bytes()),
+            levenshtein_distance("🚀".as_bytes(), "x".as_bytes(), &mut cache),
             4
         );
 
         // Same multi-byte character
         assert_eq!(
-            levenshtein_distance("café".as_bytes(), "café".as_bytes()),
+            levenshtein_distance("café".as_bytes(), "café".as_bytes(), &mut cache),
             0
         );
     }
 
     #[test]
     fn test_fuzzy_prefix_match_basic() {
+        let mut cache = BufferCache::default();
+
         // Exact prefix (distance 0)
         assert_eq!(
-            is_fuzzy_prefix_match(b"hel", b"hello", 0),
+            is_fuzzy_prefix_match(b"hel", b"hello", 0, &mut cache),
             Some(0)
         );
         assert_eq!(
-            is_fuzzy_prefix_match(b"hello", b"hello", 0),
+            is_fuzzy_prefix_match(b"hello", b"hello", 0, &mut cache),
             Some(0)
         );
 
         // One edit (distance 1)
         assert_eq!(
-            is_fuzzy_prefix_match(b"helo", b"hello", 1),
+            is_fuzzy_prefix_match(b"helo", b"hello", 1, &mut cache),
             Some(1)
         ); // Missing 'l'
         assert_eq!(
-            is_fuzzy_prefix_match(b"hel", b"hello", 1),
+            is_fuzzy_prefix_match(b"hel", b"hello", 1, &mut cache),
             Some(0)
         ); // Exact match
 
         // Too far (no match)
         assert_eq!(
-            is_fuzzy_prefix_match(b"xyz", b"abc", 2),
+            is_fuzzy_prefix_match(b"xyz", b"abc", 2, &mut cache),
             None
         );
         assert_eq!(
-            is_fuzzy_prefix_match(b"hello", b"world", 2),
+            is_fuzzy_prefix_match(b"hello", b"world", 2, &mut cache),
             None
         );
 
         // Empty search term
         assert_eq!(
-            is_fuzzy_prefix_match(b"", b"anything", 1),
+            is_fuzzy_prefix_match(b"", b"anything", 1, &mut cache),
             Some(0)
         );
     }
 
     #[test]
     fn test_fuzzy_prefix_match_edge_cases() {
+        let mut cache = BufferCache::default();
+
         // Search term longer than target
         assert_eq!(
-            is_fuzzy_prefix_match(b"hello", b"hel", 1),
+            is_fuzzy_prefix_match(b"hello", b"hel", 1, &mut cache),
             None
         );
 
         // Distance 2 allows more flexibility
         assert_eq!(
-            is_fuzzy_prefix_match(b"helo", b"hello", 2),
+            is_fuzzy_prefix_match(b"helo", b"hello", 2, &mut cache),
             Some(1)
         );
         assert_eq!(
-            is_fuzzy_prefix_match(b"hllo", b"hello", 2),
+            is_fuzzy_prefix_match(b"hllo", b"hello", 2, &mut cache),
             Some(1)
         ); // Missing 'e'
+        assert_eq!(
+            is_fuzzy_prefix_match(b"hlo", b"hello", 2, &mut cache),
+            Some(2)
+        ); // Missing 'e' and 'l'
     }
 
     #[test]
@@ -2215,7 +2240,8 @@ mod tests {
         tree.insert("hero", 4);
 
         // Search with distance 1 - "helo" typo
-        let results: Vec<_> = tree.search_typo_tolerant("helo", 1).collect();
+        let results: Vec<_> = tree.search_typo_tolerant("helo", 1)
+                .map(|(s, k, t)| (s, *k, t)).collect();
 
         // All words actually have distance 1 from "helo":
         // - "hell": hel matches, then distance("o", "") = 1
@@ -2223,11 +2249,12 @@ mod tests {
         // - "help": help matches, distance("helo", "help") = 1 (substitute 'o' with 'p')
         // - "hero": hero matches, distance("helo", "hero") = 1 (substitute 'l' with 'r')
         assert_eq!(results.len(), 4);
-
-        // Verify all distances are 1
-        for (_, _, distance) in &results {
-            assert_eq!(*distance, 1);
-        }
+        assert_eq!(results, vec![
+            ("hell".to_string(), 3, 1),
+            ("hello".to_string(), 1, 1),
+            ("help".to_string(), 2, 1),
+            ("hero".to_string(), 4, 1)
+        ]);
     }
 
     #[test]
@@ -2255,17 +2282,15 @@ mod tests {
         tree.insert("hell", 3);
 
         // Distance 0 should match exact prefixes only
-        let results: Vec<_> = tree.search_typo_tolerant("hel", 0).collect();
+        let results: Vec<_> = tree.search_typo_tolerant("hel", 0)
+            .map(|(s, k, t)| (s, *k, t))
+            .collect();
 
-        eprintln!("Search for 'hel' with distance 0:");
-        for (key, value, distance) in &results {
-            eprintln!("  {} -> {} (distance: {})", key, value, distance);
-        }
-
-        assert!(results.len() >= 1, "Expected at least 1 result for exact prefix, got {}", results.len());
-        for (_, _, distance) in &results {
-            assert_eq!(*distance, 0);
-        }
+        assert_eq!(results, vec![
+            ("hell".to_string(), 3, 0),
+            ("hello".to_string(), 1, 0),
+            ("help".to_string(), 2, 0),
+        ]);
     }
 
     #[test]
@@ -2277,16 +2302,11 @@ mod tests {
 
         // Note: "café" has multi-byte chars, so byte-level distance may be > 1
         // Search for "caf" should match all with low distances
-        let results: Vec<_> = tree.search_typo_tolerant("caf", 1).collect();
+        let results: Vec<_> = tree.search_typo_tolerant("caf", 1)
+            .map(|(s, k, t)| (s, *k, t))
+            .collect();
 
-        // Should find at least some matches
-        assert!(results.len() > 0);
-
-        // Verify all results are alphabetically ordered
-        let keys: Vec<String> = results.iter().map(|(k, _, _)| k.clone()).collect();
-        let mut sorted_keys = keys.clone();
-        sorted_keys.sort();
-        assert_eq!(keys, sorted_keys);
+        assert_eq!(results, vec![("café".to_string(), 1, 0), ("cake".to_string(), 2, 1), ("care".to_string(), 3, 1)]);
     }
 
     #[test]
@@ -2297,12 +2317,13 @@ mod tests {
         tree.insert("abc", 3);
 
         // Empty search term should match all with distance 0
-        let results: Vec<_> = tree.search_typo_tolerant("", 1).collect();
-        assert_eq!(results.len(), 3);
+        let results: Vec<_> = tree.search_typo_tolerant("", 1)
+            .map(|(s, k, t)| (s, *k, t))
+            .collect();
 
-        for (_, _, distance) in &results {
-            assert_eq!(*distance, 0);
-        }
+        assert_eq!(results, vec![
+            ("a".to_string(), 1, 0), ("ab".to_string(), 2, 0), ("abc".to_string(), 3, 0)
+        ]);
     }
 
     #[test]
@@ -2339,14 +2360,47 @@ mod tests {
         tree.insert("ab", 2);
         tree.insert("abc", 3);
         tree.insert("abcd", 4);
+        tree.insert("zz", 5);
 
         // Single character search
-        let results: Vec<_> = tree.search_typo_tolerant("a", 0).collect();
-        assert_eq!(results.len(), 4); // All start with "a"
+        let results: Vec<_> = tree.search_typo_tolerant("a", 0)
+            .map(|(s, k, t)| (s, *k, t))
+            .collect();
+        assert_eq!(results, vec![
+
+            ("a".to_string(), 1, 0), ("ab".to_string(), 2, 0), ("abc".to_string(), 3, 0), ("abcd".to_string(), 4, 0)
+
+        ]);
 
         // Search with distance allowing variations
-        let results: Vec<_> = tree.search_typo_tolerant("b", 1).collect();
-        assert!(results.len() > 0); // "ab" and others are distance 1 from "b"
+        let results: Vec<_> = tree.search_typo_tolerant("a", 1)
+            .map(|(s, k, t)| (s, *k, t))
+            .collect();
+        assert_eq!(results, vec![
+            ("a".to_string(), 1, 0), ("ab".to_string(), 2, 0), ("abc".to_string(), 3, 0), ("abcd".to_string(), 4, 0), ("zz".to_string(), 5, 1)
+        ]);
+
+        // Search with distance allowing variations
+        let results: Vec<_> = tree.search_typo_tolerant("b", 1)
+            .map(|(s, k, t)| (s, *k, t))
+            .collect();
+        assert_eq!(results, vec![
+            ("a".to_string(), 1, 1), ("ab".to_string(), 2, 1), ("abc".to_string(), 3, 1), ("abcd".to_string(), 4, 1), ("zz".to_string(), 5, 1)
+        ]);
+
+        let results: Vec<_> = tree.search_typo_tolerant("bb", 1)
+            .map(|(s, k, t)| (s, *k, t))
+            .collect();
+        assert_eq!(results, vec![
+            ("ab".to_string(), 2, 1), ("abc".to_string(), 3, 1), ("abcd".to_string(), 4, 1)
+        ]);
+
+        let results: Vec<_> = tree.search_typo_tolerant("bb", 2)
+            .map(|(s, k, t)| (s, *k, t))
+            .collect();
+        assert_eq!(results, vec![
+            ("a".to_string(), 1, 2), ("ab".to_string(), 2, 1), ("abc".to_string(), 3, 1), ("abcd".to_string(), 4, 1), ("zz".to_string(), 5, 2)
+        ]);
     }
 
     #[test]
