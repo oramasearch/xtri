@@ -61,6 +61,7 @@ fn main() {
     println!("Search 'app' with tolerance");
     let iter = tree.search_with_tolerance("apl", 1);
     for (key, value, distance) in iter {
+        let key = String::from_utf8_lossy(&key).to_string();
         println!("  {} -> {} (distance={})", key, value, distance);
     }
     // Output:

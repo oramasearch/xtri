@@ -677,6 +677,7 @@ dependencies = [
  "criterion",
  "fake",
  "rand",
+ "serde",
 ]
 
 [[package]]

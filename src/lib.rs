@@ -1273,7 +1273,7 @@ mod tests {
         // Search with distance 1 - "helo" typo
         let results: Vec<_> = tree
             .search_with_tolerance("helo", 1)
-            .map(|(s, k, t)| (s, *k, t))
+            .map(key_to_string)
             .collect();
 
         // All words actually have distance 1 from "helo":
@@ -1301,7 +1301,10 @@ mod tests {
         tree.insert("temp", 3);
         tree.insert("team", 4);
 
-        let results: Vec<_> = tree.search_with_tolerance("tex", 1).collect();
+        let results: Vec<_> = tree
+            .search_with_tolerance("tex", 1)
+            .map(key_to_string)
+            .collect();
 
         // Results should be alphabetically ordered, not distance-ordered
         let keys: Vec<String> = results.iter().map(|(k, _, _)| k.clone()).collect();
@@ -1320,7 +1323,7 @@ mod tests {
         // Distance 0 should match exact prefixes only
         let results: Vec<_> = tree
             .search_with_tolerance("hel", 0)
-            .map(|(s, k, t)| (s, *k, t))
+            .map(key_to_string)
             .collect();
 
         assert_eq!(
@@ -1344,7 +1347,7 @@ mod tests {
         // Search for "caf" should match all with low distances
         let results: Vec<_> = tree
             .search_with_tolerance("caf", 1)
-            .map(|(s, k, t)| (s, *k, t))
+            .map(key_to_string)
             .collect();
 
         assert_eq!(
@@ -1367,7 +1370,7 @@ mod tests {
         // Empty search term should match all with distance 0
         let results: Vec<_> = tree
             .search_with_tolerance("", 1)
-            .map(|(s, k, t)| (s, *k, t))
+            .map(key_to_string)
             .collect();
 
         assert_eq!(
@@ -1419,7 +1422,7 @@ mod tests {
         // Single character search
         let results: Vec<_> = tree
             .search_with_tolerance("a", 0)
-            .map(|(s, k, t)| (s, *k, t))
+            .map(key_to_string)
             .collect();
         assert_eq!(
             results,
@@ -1434,7 +1437,7 @@ mod tests {
         // Search with distance allowing variations
         let results: Vec<_> = tree
             .search_with_tolerance("a", 1)
-            .map(|(s, k, t)| (s, *k, t))
+            .map(key_to_string)
             .collect();
         assert_eq!(
             results,
@@ -1450,7 +1453,7 @@ mod tests {
         // Search with distance allowing variations
         let results: Vec<_> = tree
             .search_with_tolerance("b", 1)
-            .map(|(s, k, t)| (s, *k, t))
+            .map(key_to_string)
             .collect();
         assert_eq!(
             results,
@@ -1465,7 +1468,7 @@ mod tests {
 
         let results: Vec<_> = tree
             .search_with_tolerance("bb", 1)
-            .map(|(s, k, t)| (s, *k, t))
+            .map(key_to_string)
             .collect();
         assert_eq!(
             results,
@@ -1478,7 +1481,7 @@ mod tests {
 
         let results: Vec<_> = tree
             .search_with_tolerance("bb", 2)
-            .map(|(s, k, t)| (s, *k, t))
+            .map(key_to_string)
             .collect();
         assert_eq!(
             results,
@@ -1501,7 +1504,10 @@ mod tests {
         tree.insert("appropriate", 4);
 
         // Search with distance 2 for "aple" (missing 'p')
-        let results: Vec<_> = tree.search_with_tolerance("aple", 2).collect();
+        let results: Vec<_> = tree
+            .search_with_tolerance("aple", 2)
+            .map(key_to_string)
+            .collect();
 
         // Should find "apple" and possibly others
         assert!(results.iter().any(|(k, _, _)| k == "apple"));
@@ -1519,18 +1525,25 @@ mod tests {
         tree.insert("hell", 200);
         tree.insert("help", 300);
 
-        let results: Vec<_> = tree.search_with_tolerance("helo", 1).collect();
+        let results: Vec<_> = tree
+            .search_with_tolerance("helo", 1)
+            .map(key_to_string)
+            .collect();
 
         // Verify we get the correct values back
         // All three words have distance 1 from "helo"
         assert_eq!(results.len(), 3);
         for (key, value, _) in &results {
             match key.as_str() {
-                "hello" => assert_eq!(**value, 100),
-                "hell" => assert_eq!(**value, 200),
-                "help" => assert_eq!(**value, 300),
+                "hello" => assert_eq!(*value, 100),
+                "hell" => assert_eq!(*value, 200),
+                "help" => assert_eq!(*value, 300),
                 _ => panic!("Unexpected key: {key}"),
             }
         }
+    }
+
+    fn key_to_string<T: Clone + Copy>((key, value, d): (Vec<u8>, &T, u8)) -> (String, T, u8) {
+        (String::from_utf8_lossy(&key).to_string(), *value, d)
     }
 }

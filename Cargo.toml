@@ -11,6 +11,7 @@ keywords = ["radix-tree", "trie", "data-structure", "prefix-search", "utf8"]
 categories = ["data-structures", "algorithms"]
 
 [dependencies]
+serde = { version = "1.0", features = ["derive"] }
 
 [dev-dependencies]
 criterion = "0.5"

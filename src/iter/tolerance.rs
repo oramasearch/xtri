@@ -152,7 +152,7 @@ impl<'a, T> TypoTolerantSearchIterator<'a, T> {
 }
 
 impl<'a, T> Iterator for TypoTolerantSearchIterator<'a, T> {
-    type Item = (String, &'a T, u8);
+    type Item = (Vec<u8>, &'a T, u8);
 
     fn next(&mut self) -> Option<Self::Item> {
         loop {
@@ -169,14 +169,12 @@ impl<'a, T> Iterator for TypoTolerantSearchIterator<'a, T> {
                         &mut self.cache,
                     ) {
                         // Found a match! Convert to String and return
-                        let key_string = String::from_utf8_lossy(&current_key).to_string();
-
                         // Push back to continue with children
                         if !node.children.is_empty() {
-                            self.stack.push((node, 1, current_key, 0));
+                            self.stack.push((node, 1, current_key.clone(), 0));
                         }
 
-                        return Some((key_string, value, distance as u8));
+                        return Some((current_key, value, distance as u8));
                     }
                 }
 

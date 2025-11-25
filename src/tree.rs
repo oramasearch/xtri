@@ -1,11 +1,13 @@
+use serde::Serialize;
+
 use crate::{LeavesIterator, SearchIterator, SearchMode, TypoTolerantSearchIterator};
 
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 pub struct RadixTree<T> {
     root: RadixNode<T>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 pub struct RadixNode<T> {
     pub value: Option<T>,
     pub children: Vec<(u8, RadixNode<T>)>,
