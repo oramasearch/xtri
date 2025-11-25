@@ -20,3 +20,6 @@ rand = "0.8"
 [[bench]]
 name = "benchmarks"
 harness = false
+
+[lints.clippy]
+needless_doctest_main = "allow"

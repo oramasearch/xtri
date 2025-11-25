@@ -1,5 +1,11 @@
 #![doc = include_str!("../README.md")]
 
+mod iter;
+mod tree;
+
+pub use iter::*;
+pub use tree::RadixTree;
+
 /// Search mode for radix tree operations.
 ///
 /// Determines how search operations should match keys.
@@ -9,864 +15,6 @@ pub enum SearchMode {
     Prefix,
     /// Match only keys that exactly equal the given string.
     Exact,
-}
-
-#[derive(Debug)]
-pub struct RadixTree<T> {
-    root: RadixNode<T>,
-}
-
-#[derive(Debug)]
-struct RadixNode<T> {
-    value: Option<T>,
-    children: Vec<(u8, RadixNode<T>)>,
-    key: Vec<u8>,
-}
-
-impl<T> RadixNode<T> {
-    fn new() -> Self {
-        Self {
-            value: None,
-            children: Vec::new(),
-            key: Vec::new(),
-        }
-    }
-
-    fn new_with_key(key: Vec<u8>) -> Self {
-        Self {
-            value: None,
-            children: Vec::new(),
-            key,
-        }
-    }
-}
-
-impl<T> Default for RadixTree<T> {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl<T> RadixTree<T> {
-    pub fn new() -> Self {
-        Self {
-            root: RadixNode::new(),
-        }
-    }
-
-    /// Inserts a key-value pair into the radix tree.
-    ///
-    /// # Arguments
-    /// * `key` - The string key to insert (supports full UTF-8 including emojis)
-    /// * `value` - The value to associate with the key
-    ///
-    /// # Examples
-    /// ```
-    /// use xtri::RadixTree;
-    /// let mut tree = RadixTree::new();
-    /// tree.insert("hello", "world");
-    /// tree.insert("help", "assistance");
-    /// tree.insert("🚀", "rocket");
-    /// ```
-    pub fn insert(&mut self, key: &str, value: T) {
-        self.mut_value(key, |existing_value| {
-            *existing_value = Some(value);
-        });
-    }
-
-    fn common_prefix_length(a: &[u8], b: &[u8]) -> usize {
-        a.iter().zip(b.iter()).take_while(|(x, y)| x == y).count()
-    }
-
-    /// Searches for key-value pairs based on the specified search mode.
-    ///
-    /// Returns keys that match according to the search mode.
-    /// Keys are processed at the byte level to properly handle UTF-8 encoded strings.
-    ///
-    /// # Arguments
-    /// * `key` - The key string to search for (supports full UTF-8)
-    /// * `mode` - The search mode (Prefix or Exact)
-    ///
-    /// # Returns
-    /// A vector of tuples containing (key, value_reference) for all matches.
-    /// Keys are returned as owned Strings, values as references.
-    ///
-    /// # Examples
-    /// ```
-    /// use xtri::{RadixTree, SearchMode};
-    /// let mut tree = RadixTree::new();
-    /// tree.insert("hello", 1);
-    /// tree.insert("help", 2);
-    /// tree.insert("world", 3);
-    ///
-    /// // Prefix search
-    /// let results = tree.search_prefix("hel", SearchMode::Prefix);
-    /// assert_eq!(results.len(), 2); // Returns: [("hello", &1), ("help", &2)]
-    ///
-    /// // Exact search
-    /// let exact_results = tree.search_prefix("hello", SearchMode::Exact);
-    /// assert_eq!(exact_results.len(), 1); // Returns: [("hello", &1)]
-    /// ```
-    pub fn search_prefix(&self, key: &str, mode: SearchMode) -> Vec<(String, &T)> {
-        self.search_iter(key, mode)
-            .map(|(key_bytes, value)| (String::from_utf8_lossy(&key_bytes).to_string(), value))
-            .collect()
-    }
-
-    /// Returns an iterator over key-value pairs based on the specified search mode.
-    ///
-    /// This provides a lazy alternative to `search_prefix`, yielding results one at a time
-    /// as the tree is traversed. Memory usage is O(tree depth) instead of O(number of results).
-    ///
-    /// # Arguments
-    /// * `key` - The key string to search for (supports full UTF-8)
-    /// * `mode` - The search mode (Prefix or Exact)
-    ///
-    /// # Returns
-    /// An iterator that yields (key, value_reference) tuples for all matches.
-    ///
-    /// # Examples
-    /// ```
-    /// use xtri::{RadixTree, SearchMode};
-    /// let mut tree = RadixTree::new();
-    /// tree.insert("hello", 1);
-    /// tree.insert("help", 2);
-    /// tree.insert("world", 3);
-    ///
-    /// // Prefix search
-    /// let results: Vec<_> = tree.search_iter("hel", SearchMode::Prefix).collect();
-    /// assert_eq!(results.len(), 2);
-    ///
-    /// // Exact search
-    /// let exact_results: Vec<_> = tree.search_iter("hello", SearchMode::Exact).collect();
-    /// assert_eq!(exact_results.len(), 1);
-    /// ```
-    pub fn search_iter(&self, key: &str, mode: SearchMode) -> SearchIterator<T> {
-        SearchIterator::new(&self.root, key.as_bytes(), mode)
-    }
-
-    /// Returns an iterator over values only based on the specified search mode.
-    ///
-    /// This provides a lazy alternative that yields only values, not keys.
-    /// Internally uses `search_iter` and maps to extract only the value references.
-    /// Memory usage is O(tree depth) instead of O(number of results).
-    ///
-    /// # Arguments
-    /// * `key` - The key string to search for (supports full UTF-8)
-    /// * `mode` - The search mode (Prefix or Exact)
-    ///
-    /// # Returns
-    /// An iterator that yields value references for all matches.
-    ///
-    /// # Examples
-    /// ```
-    /// use xtri::{RadixTree, SearchMode};
-    /// let mut tree = RadixTree::new();
-    /// tree.insert("hello", 1);
-    /// tree.insert("help", 2);
-    /// tree.insert("world", 3);
-    ///
-    /// // Prefix search - get only values
-    /// let values: Vec<_> = tree.search_iter_value("hel", SearchMode::Prefix).collect();
-    /// assert_eq!(values.len(), 2);
-    /// assert!(values.contains(&&1));
-    /// assert!(values.contains(&&2));
-    ///
-    /// // Exact search - get only values
-    /// let exact_values: Vec<_> = tree.search_iter_value("hello", SearchMode::Exact).collect();
-    /// assert_eq!(exact_values.len(), 1);
-    /// assert_eq!(*exact_values[0], 1);
-    /// ```
-    pub fn search_iter_value(&self, key: &str, mode: SearchMode) -> impl Iterator<Item = &T> {
-        self.search_iter(key, mode).map(|(_, value)| value)
-    }
-
-    /// Returns an iterator over only the leaf nodes of the radix tree.
-    ///
-    /// A leaf node is defined as a node that has a value but no children,
-    /// representing the end of a key path with no further extensions.
-    /// This provides lazy traversal with memory usage of O(tree depth).
-    /// Results are returned in alphabetical order.
-    ///
-    /// # Returns
-    /// An iterator that yields (key, value_reference) tuples for all leaf nodes.
-    ///
-    /// # Examples
-    /// ```
-    /// use xtri::RadixTree;
-    /// let mut tree = RadixTree::new();
-    /// tree.insert("hello", 1);
-    /// tree.insert("help", 2);
-    /// tree.insert("world", 3);
-    /// tree.insert("he", 4);  // Not a leaf (has children: hello, help)
-    ///
-    /// let leaves: Vec<_> = tree.iter_leaves().collect();
-    /// // Returns only nodes with no children: [("hello", &1), ("help", &2), ("world", &3)]
-    /// // "he" is not included because it has children
-    /// ```
-    pub fn iter_leaves(&self) -> LeavesIterator<T> {
-        LeavesIterator::new(&self.root)
-    }
-
-    /// Searches for keys where the search term is approximately a prefix within the given tolerance.
-    ///
-    /// Uses Levenshtein distance to allow for typos and small variations. Returns results
-    /// in alphabetical order with their edit distances. This performs fuzzy prefix matching,
-    /// meaning the search term should approximately match the beginning of keys.
-    ///
-    /// # Arguments
-    /// * `key` - The search term
-    /// * `tolerance` - Maximum edit distance allowed (recommend 1-2 for performance)
-    ///
-    /// # Returns
-    /// An iterator yielding (key, value_reference, distance) tuples where:
-    /// - key is the matched key as a String
-    /// - value_reference is a reference to the stored value
-    /// - distance is the Levenshtein distance (0 means exact prefix match)
-    ///
-    /// # Note on UTF-8
-    /// Distance is calculated at the byte level. Multi-byte UTF-8 characters
-    /// may result in distances > 1 (e.g., "café" vs "cafe" has distance 2).
-    ///
-    /// # Examples
-    /// ```
-    /// use xtri::RadixTree;
-    ///
-    /// let mut tree = RadixTree::new();
-    /// tree.insert("hello", 1);
-    /// tree.insert("help", 2);
-    /// tree.insert("hell", 3);
-    /// tree.insert("hero", 4);
-    ///
-    /// // Search with typo: "helo" instead of "hel"
-    /// let results: Vec<_> = tree.search_typo_tolerant("helo", 1).collect();
-    /// println!("{:?}", results);
-    /// // Returns: [("hell", &3, 1), ("hello", &1, 1)]
-    /// // "help" and "hero" have distance 2, so they're excluded
-    ///
-    /// // Exact matches have distance 0
-    /// let results: Vec<_> = tree.search_typo_tolerant("hel", 1).collect();
-    /// println!("{:?}", results);
-    /// // Returns: [("hell", &3, 0), ("hello", &1, 0), ("help", &2, 0)]
-    /// ```
-    pub fn search_typo_tolerant(&self, key: &str, tolerance: u8) -> TypoTolerantSearchIterator<T> {
-        TypoTolerantSearchIterator::new(&self.root, key.as_bytes(), tolerance)
-    }
-
-    /// Provides mutable access to the value associated with the given key through a closure.
-    ///
-    /// The closure receives a `&mut Option<T>` allowing you to read, modify, or create the value.
-    /// If the key doesn't exist, the Option will be None initially. The closure's return value
-    /// is returned by this method.
-    ///
-    /// # Arguments
-    /// * `key` - The string key to look up (supports full UTF-8)
-    /// * `f` - A closure that receives `&mut Option<T>` for the value at this key and returns a value
-    ///
-    /// # Returns
-    /// The value returned by the closure
-    ///
-    /// # Examples
-    /// ```
-    /// use xtri::RadixTree;
-    /// let mut tree: RadixTree<i32> = RadixTree::new();
-    ///
-    /// // Create a new value and return confirmation
-    /// let created = tree.mut_value("counter", |value| {
-    ///     *value = Some(1);
-    ///     true // Return whether we created a new value
-    /// });
-    /// assert!(created);
-    ///
-    /// // Modify existing value and return the new value
-    /// let new_value = tree.mut_value("counter", |value| {
-    ///     if let Some(v) = value {
-    ///         *v += 1;
-    ///         *v
-    ///     } else {
-    ///         0
-    ///     }
-    /// });
-    /// assert_eq!(new_value, 2);
-    ///
-    /// // Get current value without modifying
-    /// let current = tree.mut_value("counter", |value| {
-    ///     value.unwrap_or(0)
-    /// });
-    /// assert_eq!(current, 2);
-    /// ```
-    pub fn mut_value<F, R>(&mut self, key: &str, f: F) -> R
-    where
-        F: FnOnce(&mut Option<T>) -> R,
-    {
-        let key_bytes = key.as_bytes().to_vec();
-        Self::mut_value_recursive(&mut self.root, key_bytes, f)
-    }
-
-    fn mut_value_recursive<F, R>(node: &mut RadixNode<T>, key: Vec<u8>, f: F) -> R
-    where
-        F: FnOnce(&mut Option<T>) -> R,
-    {
-        if key.is_empty() {
-            // We've reached the target node - call the closure with the value
-            return f(&mut node.value);
-        }
-
-        let first_byte = key[0];
-
-        // Try to find existing child
-        if let Ok(index) = node
-            .children
-            .binary_search_by_key(&first_byte, |(byte, _)| *byte)
-        {
-            let (_, child) = &mut node.children[index];
-            let common_len = Self::common_prefix_length(&child.key, &key);
-
-            if common_len == child.key.len() {
-                // Child's key is fully consumed, continue with remaining key
-                let remaining_key = key[common_len..].to_vec();
-                Self::mut_value_recursive(child, remaining_key, f)
-            } else if common_len == key.len() && child.key.starts_with(&key) {
-                // The key is a prefix of the child's key - need to split the child
-                let old_key = child.key.clone();
-                let old_value = child.value.take();
-                let old_children = std::mem::take(&mut child.children);
-
-                // Set the child to represent our key
-                child.key = key.clone();
-                child.value = None;
-
-                // Create new child for the remainder of the old key
-                let remaining_key = old_key[key.len()..].to_vec();
-                if !remaining_key.is_empty() {
-                    let remaining_first_byte = remaining_key[0];
-                    let mut remaining_node = RadixNode::new_with_key(remaining_key);
-                    remaining_node.value = old_value;
-                    remaining_node.children = old_children;
-                    child.children.push((remaining_first_byte, remaining_node));
-                    child.children.sort_by_key(|(byte, _)| *byte);
-                } else {
-                    child.children = old_children;
-                }
-
-                // Call the closure with the split node's value
-                return f(&mut child.value);
-            } else {
-                // Partial match - need to split both paths
-                let old_key = child.key.clone();
-                let old_value = child.value.take();
-                let old_children = std::mem::take(&mut child.children);
-
-                // Update child to represent common prefix
-                child.key = old_key[..common_len].to_vec();
-                child.value = None;
-                child.children.clear();
-
-                // Create node for old path
-                let old_remaining_key = old_key[common_len..].to_vec();
-                if !old_remaining_key.is_empty() {
-                    let old_first_byte = old_remaining_key[0];
-                    let mut old_node = RadixNode::new_with_key(old_remaining_key);
-                    old_node.value = old_value;
-                    old_node.children = old_children;
-                    child.children.push((old_first_byte, old_node));
-                }
-
-                // Create node for new path
-                let new_remaining_key = key[common_len..].to_vec();
-                if new_remaining_key.is_empty() {
-                    // The key ends at the split point
-                    child.children.sort_by_key(|(byte, _)| *byte);
-                    return f(&mut child.value);
-                } else {
-                    let new_first_byte = new_remaining_key[0];
-                    let mut new_node = RadixNode::new_with_key(new_remaining_key);
-                    new_node.value = None;
-                    child.children.push((new_first_byte, new_node));
-                    child.children.sort_by_key(|(byte, _)| *byte);
-
-                    // Find the new node we just added and call closure
-                    let new_index = child
-                        .children
-                        .binary_search_by_key(&new_first_byte, |(byte, _)| *byte)
-                        .unwrap();
-                    return f(&mut child.children[new_index].1.value);
-                }
-            }
-        } else {
-            // No existing child - create new one
-            let mut new_child = RadixNode::new_with_key(key);
-            new_child.value = None;
-            node.children.push((first_byte, new_child));
-            node.children.sort_by_key(|(byte, _)| *byte);
-
-            // Find the new child we just added and call closure
-            let index = node
-                .children
-                .binary_search_by_key(&first_byte, |(byte, _)| *byte)
-                .unwrap();
-            f(&mut node.children[index].1.value)
-        }
-    }
-
-    pub fn clear(&mut self) {
-        self.root = RadixNode::new();
-    }
-
-    /// Returns the number of key-value pairs stored in the radix tree.
-    ///
-    /// # Examples
-    /// ```
-    /// use xtri::RadixTree;
-    /// let mut tree = RadixTree::new();
-    /// assert_eq!(tree.len(), 0);
-    ///
-    /// tree.insert("hello", 1);
-    /// tree.insert("world", 2);
-    /// assert_eq!(tree.len(), 2);
-    /// ```
-    pub fn len(&self) -> usize {
-        Self::count_values(&self.root)
-    }
-
-    /// Returns `true` if the radix tree contains no key-value pairs.
-    ///
-    /// # Examples
-    /// ```
-    /// use xtri::RadixTree;
-    /// let mut tree = RadixTree::new();
-    /// assert!(tree.is_empty());
-    ///
-    /// tree.insert("hello", 1);
-    /// assert!(!tree.is_empty());
-    /// ```
-    pub fn is_empty(&self) -> bool {
-        self.len() == 0
-    }
-
-    fn count_values(node: &RadixNode<T>) -> usize {
-        let mut count = if node.value.is_some() { 1 } else { 0 };
-        for (_, child) in &node.children {
-            count += Self::count_values(child);
-        }
-        count
-    }
-}
-
-#[derive(Default)]
-struct BufferCache {
-    prev_row: Vec<usize>,
-    curr_row: Vec<usize>,
-}
-
-/// Checks if search term is approximately a prefix of target within max_distance.
-///
-/// A search term S is considered a fuzzy prefix of key K with distance d if there
-/// exists a prefix P of K where `levenshtein_distance(S, P) <= d`.
-///
-/// # Arguments
-/// * `search_term` - The search query bytes
-/// * `target` - The key bytes to check against
-/// * `max_distance` - Maximum edit distance allowed
-///
-/// # Returns
-/// `Some(distance)` if a match is found, `None` otherwise
-fn is_fuzzy_prefix_match(search_term: &[u8], target: &[u8], max_distance: u8, cache: &mut BufferCache) -> Option<usize> {
-    if search_term.is_empty() {
-        return Some(0); // Empty search matches everything with distance 0
-    }
-
-    let max_dist = max_distance as usize;
-    let search_len = search_term.len();
-
-    // Check prefixes of target from (search_len - max_dist) to (search_len + max_dist)
-    // This captures all possible fuzzy prefix matches efficiently
-    let min_prefix_len = search_len.saturating_sub(max_dist).max(1);
-    let max_prefix_len = std::cmp::min(target.len(), search_len + max_dist);
-
-    let mut best_distance = usize::MAX;
-
-    for prefix_len in min_prefix_len..=max_prefix_len {
-        if prefix_len > target.len() {
-            continue;
-        }
-
-        let dist = levenshtein_distance(search_term, &target[0..prefix_len], cache);
-        best_distance = std::cmp::min(best_distance, dist);
-    }
-
-    if best_distance <= max_dist {
-        Some(best_distance)
-    } else {
-        None
-    }
-}
-
-/// Computes the Levenshtein (edit) distance between two byte sequences.
-///
-/// Uses Wagner-Fischer algorithm with space optimization (two rows only).
-/// This operates at the byte level, so UTF-8 multi-byte characters may have
-/// distance greater than 1 (e.g., "café" vs "cafe" = distance 2).
-///
-/// # Arguments
-/// * `a` - First byte sequence
-/// * `b` - Second byte sequence
-///
-/// # Returns
-/// The minimum number of single-byte edits (insertions, deletions, substitutions)
-/// required to transform `a` into `b`.
-fn levenshtein_distance(a: &[u8], b: &[u8], cache: &mut BufferCache) -> usize {
-    if a.is_empty() {
-        return b.len();
-    }
-    if b.is_empty() {
-        return a.len();
-    }
-
-    let m = a.len();
-    let n = b.len();
-
-    // Use two rows for space optimization O(min(m,n)) instead of O(m*n)
-    let prev_row = &mut cache.prev_row;
-    let curr_row = &mut cache.curr_row;
-    if prev_row.len() < n + 1 {
-        prev_row.resize(n + 1, 0);
-    }
-    if curr_row.len() < n + 1 {
-        curr_row.resize(n + 1, 0);
-    }
-
-    // Initialize first row
-    for j in 0..=n {
-        prev_row[j] = j;
-    }
-
-    // Fill matrix row by row
-    for i in 1..=m {
-        curr_row[0] = i;
-
-        for j in 1..=n {
-            let cost = if a[i - 1] == b[j - 1] { 0 } else { 1 };
-
-            curr_row[j] = std::cmp::min(
-                std::cmp::min(
-                    prev_row[j] + 1,      // Deletion
-                    curr_row[j - 1] + 1,  // Insertion
-                ),
-                prev_row[j - 1] + cost, // Substitution
-            );
-        }
-
-        std::mem::swap(prev_row, curr_row);
-    }
-
-    prev_row[n]
-}
-
-/// Iterator for traversing search results from a radix tree search.
-///
-/// This iterator performs truly lazy traversal using a stack-based approach.
-/// Memory usage is O(tree depth) storing only node references and child indices.
-pub struct SearchIterator<'a, T> {
-    // Stack of (node, child_index, current_key) pairs for traversal state
-    stack: Vec<(&'a RadixNode<T>, usize, Vec<u8>)>,
-    // Search mode to determine matching behavior
-    mode: SearchMode,
-    // Original search key for exact matching validation
-    search_key: Vec<u8>,
-}
-
-impl<'a, T> SearchIterator<'a, T> {
-    fn new(root: &'a RadixNode<T>, prefix: &[u8], mode: SearchMode) -> Self {
-        let mut iterator = Self {
-            stack: Vec::new(),
-            mode,
-            search_key: prefix.to_vec(),
-        };
-
-        // Find the starting node that matches the prefix
-        if let Some((start_node, key_prefix)) = Self::find_starting_node(root, prefix, Vec::new()) {
-            iterator.stack.push((start_node, 0, key_prefix));
-        }
-
-        iterator
-    }
-
-    fn find_starting_node(
-        node: &'a RadixNode<T>,
-        prefix: &[u8],
-        current_key: Vec<u8>,
-    ) -> Option<(&'a RadixNode<T>, Vec<u8>)> {
-        if prefix.is_empty() {
-            // Empty prefix - start from this node
-            return Some((node, current_key));
-        }
-
-        let first_byte = prefix[0];
-        if let Ok(index) = node
-            .children
-            .binary_search_by_key(&first_byte, |(byte, _)| *byte)
-        {
-            let (_, child) = &node.children[index];
-            let common_len = RadixTree::<T>::common_prefix_length(&child.key, prefix);
-
-            if common_len == child.key.len() {
-                // Child's key is fully consumed, continue with remaining prefix
-                let mut new_current_key = current_key;
-                new_current_key.extend_from_slice(&child.key);
-                let remaining_prefix = &prefix[common_len..];
-                return Self::find_starting_node(child, remaining_prefix, new_current_key);
-            } else if common_len == prefix.len() && child.key.starts_with(prefix) {
-                // Prefix is fully consumed and matches - start from this child
-                let mut new_current_key = current_key;
-                new_current_key.extend_from_slice(&child.key);
-                return Some((child, new_current_key));
-            }
-        }
-
-        None
-    }
-}
-
-impl<'a, T> Iterator for SearchIterator<'a, T> {
-    type Item = (Vec<u8>, &'a T);
-
-    fn next(&mut self) -> Option<Self::Item> {
-        loop {
-            let (node, child_index, current_key) = self.stack.pop()?;
-
-            // If this is the first visit to this node (child_index == 0), check for value
-            if child_index == 0 {
-                if let Some(ref value) = node.value {
-                    // Check if this value matches based on search mode
-                    let matches = match self.mode {
-                        SearchMode::Exact => current_key == self.search_key,
-                        SearchMode::Prefix => true, // All values found are valid for prefix search
-                    };
-
-                    if matches {
-                        // Push back with child_index = 1 to continue with children next time
-                        if !node.children.is_empty() {
-                            self.stack.push((node, 1, current_key.clone()));
-                        }
-                        return Some((current_key, value));
-                    }
-                }
-
-                // No value or no match, start processing children
-                if !node.children.is_empty() {
-                    let should_continue = match self.mode {
-                        SearchMode::Prefix => true, // Always continue for prefix search
-                        SearchMode::Exact => current_key.len() < self.search_key.len(), // Only continue if we haven't exceeded search key length
-                    };
-
-                    if should_continue {
-                        self.stack.push((node, 1, current_key));
-                    }
-                }
-                continue;
-            }
-
-            // Processing children: child_index - 1 is the current child being processed
-            let current_child_idx = child_index - 1;
-
-            if current_child_idx < node.children.len() {
-                // Push the next child index for this node
-                if current_child_idx + 1 < node.children.len() {
-                    let should_continue_siblings = match self.mode {
-                        SearchMode::Prefix => true,
-                        SearchMode::Exact => current_key.len() <= self.search_key.len(),
-                    };
-
-                    if should_continue_siblings {
-                        self.stack
-                            .push((node, child_index + 1, current_key.clone()));
-                    }
-                }
-
-                // Push the current child to be processed
-                let (_, child) = &node.children[current_child_idx];
-                let mut child_key = current_key;
-                child_key.extend_from_slice(&child.key);
-
-                // Determine if we should process this child
-                let should_process_child = match self.mode {
-                    SearchMode::Prefix => true, // Always process for prefix search
-                    SearchMode::Exact => {
-                        // Only process child if it could lead to the exact key
-                        child_key.len() <= self.search_key.len()
-                            && self.search_key.starts_with(&child_key)
-                    }
-                };
-
-                if should_process_child {
-                    self.stack.push((child, 0, child_key));
-                }
-            }
-        }
-    }
-
-    fn size_hint(&self) -> (usize, Option<usize>) {
-        // Cannot determine size without traversing, provide conservative estimate
-        (0, None)
-    }
-}
-
-/// Iterator for traversing only the leaf nodes of a radix tree.
-///
-/// A leaf node is defined as a node that has a value but no children,
-/// representing the end of a key path with no further extensions.
-/// This iterator performs lazy traversal using a stack-based approach.
-/// Memory usage is O(tree depth) storing only node references and child indices.
-pub struct LeavesIterator<'a, T> {
-    // Stack of (node, child_index, current_key) pairs for traversal state
-    stack: Vec<(&'a RadixNode<T>, usize, Vec<u8>)>,
-}
-
-impl<'a, T> LeavesIterator<'a, T> {
-    fn new(root: &'a RadixNode<T>) -> Self {
-        let mut iterator = Self { stack: Vec::new() };
-
-        // Start traversal from the root with empty key
-        iterator.stack.push((root, 0, Vec::new()));
-        iterator
-    }
-}
-
-impl<'a, T> Iterator for LeavesIterator<'a, T> {
-    type Item = (Vec<u8>, &'a T);
-
-    fn next(&mut self) -> Option<Self::Item> {
-        loop {
-            let (node, child_index, current_key) = self.stack.pop()?;
-
-            // If this is the first visit to this node (child_index == 0), check if it's a leaf
-            if child_index == 0 {
-                // A leaf node has a value and no children
-                if let Some(ref value) = node.value {
-                    if node.children.is_empty() {
-                        // This is a leaf node - return it
-                        return Some((current_key.clone(), value));
-                    }
-                }
-
-                // Not a leaf or no value, start processing children
-                if !node.children.is_empty() {
-                    self.stack.push((node, 1, current_key));
-                }
-                continue;
-            }
-
-            // Processing children: child_index - 1 is the current child being processed
-            let current_child_idx = child_index - 1;
-
-            if current_child_idx < node.children.len() {
-                // Push the next child index for this node
-                if current_child_idx + 1 < node.children.len() {
-                    self.stack
-                        .push((node, child_index + 1, current_key.clone()));
-                }
-
-                // Push the current child to be processed
-                let (_, child) = &node.children[current_child_idx];
-                let mut child_key = current_key;
-                child_key.extend_from_slice(&child.key);
-
-                self.stack.push((child, 0, child_key));
-            }
-        }
-    }
-}
-
-/// Iterator for typo-tolerant fuzzy prefix search in a radix tree.
-///
-/// This iterator finds all keys where the search term is approximately a prefix,
-/// allowing for typos within a specified edit distance tolerance. Uses Levenshtein
-/// distance to measure similarity.
-///
-/// Results are returned in alphabetical order with their edit distances.
-/// Memory usage is O(tree depth) using a stack-based traversal approach.
-pub struct TypoTolerantSearchIterator<'a, T> {
-    // Stack of (node, child_index, current_key, _unused) for traversal
-    stack: Vec<(&'a RadixNode<T>, usize, Vec<u8>, u8)>,
-    // Original search key for distance computation
-    search_key: Vec<u8>,
-    // Maximum Levenshtein distance allowed
-    max_distance: u8,
-    // Buffer cache for distance computations
-    cache: BufferCache,
-}
-
-impl<'a, T> TypoTolerantSearchIterator<'a, T> {
-    fn new(root: &'a RadixNode<T>, search_key: &[u8], max_distance: u8) -> Self {
-        let mut iterator = Self {
-            stack: Vec::new(),
-            search_key: search_key.to_vec(),
-            max_distance,
-            cache: Default::default(),
-        };
-
-        // Start from root - can't optimize starting point for fuzzy search
-        // Must explore all branches to find fuzzy matches
-        iterator.stack.push((root, 0, Vec::new(), 0));
-        iterator
-    }
-}
-
-impl<'a, T> Iterator for TypoTolerantSearchIterator<'a, T> {
-    type Item = (String, &'a T, u8);
-
-    fn next(&mut self) -> Option<Self::Item> {
-        loop {
-            let (node, child_index, current_key, _) = self.stack.pop()?;
-
-            // First visit: check if node has a value that matches
-            if child_index == 0 {
-                if let Some(ref value) = node.value {
-                    // Check if current_key is a fuzzy match for our search
-                    if let Some(distance) =
-                        is_fuzzy_prefix_match(&self.search_key, &current_key, self.max_distance, &mut self.cache)
-                    {
-                        // Found a match! Convert to String and return
-                        let key_string = String::from_utf8_lossy(&current_key).to_string();
-
-                        // Push back to continue with children
-                        if !node.children.is_empty() {
-                            self.stack.push((node, 1, current_key, 0));
-                        }
-
-                        return Some((key_string, value, distance as u8));
-                    }
-                }
-
-                // No match or no value, start processing children
-                if !node.children.is_empty() {
-                    self.stack.push((node, 1, current_key, 0));
-                }
-                continue;
-            }
-
-            // Processing children
-            let current_child_idx = child_index - 1;
-
-            if current_child_idx < node.children.len() {
-                // Push next sibling
-                if current_child_idx + 1 < node.children.len() {
-                    self.stack.push((node, child_index + 1, current_key.clone(), 0));
-                }
-
-                // Process current child
-                let (_, child) = &node.children[current_child_idx];
-                let mut child_key = current_key;
-                child_key.extend_from_slice(&child.key);
-
-                // Always explore children - pruning would be too complex for fuzzy prefix matching
-                // since we need to check if the search term is approximately a prefix of ANY
-                // prefix of the stored keys
-                self.stack.push((child, 0, child_key, 0));
-            }
-        }
-    }
 }
 
 #[cfg(test)]
@@ -2115,123 +1263,6 @@ mod tests {
     }
 
     #[test]
-    fn test_levenshtein_distance_basic() {
-        let mut cache = BufferCache::default();
-
-        // Empty strings
-        assert_eq!(levenshtein_distance(b"", b"", &mut cache), 0);
-        assert_eq!(levenshtein_distance(b"abc", b"", &mut cache), 3);
-        assert_eq!(levenshtein_distance(b"", b"xyz", &mut cache), 3);
-
-        // Identical strings
-        assert_eq!(levenshtein_distance(b"abc", b"abc", &mut cache), 0);
-        assert_eq!(levenshtein_distance(b"hello", b"hello", &mut cache), 0);
-        // Single edits
-        assert_eq!(levenshtein_distance(b"abc", b"abd", &mut cache), 1); // Substitution
-        assert_eq!(levenshtein_distance(b"abc", b"abcd", &mut cache), 1); // Insertion
-        assert_eq!(levenshtein_distance(b"abcd", b"abc", &mut cache), 1); // Deletion
-        // Classic examples
-        assert_eq!(levenshtein_distance(b"kitten", b"sitting", &mut cache), 3);
-        assert_eq!(levenshtein_distance(b"saturday", b"sunday", &mut cache), 3);
-
-        assert_eq!(levenshtein_distance(b"abdc", b"abc", &mut cache), 1);
-        assert_eq!(levenshtein_distance(b"abc", b"abdc", &mut cache), 1);
-        assert_eq!(levenshtein_distance(b"abc", b"ac", &mut cache), 1);
-        assert_eq!(levenshtein_distance(b"ac", b"abc", &mut cache), 1);
-    }
-
-    #[test]
-    fn test_levenshtein_distance_utf8() {
-        let mut cache = BufferCache::default();
-
-        // UTF-8 multi-byte characters (byte-level distance)
-        // "café" has é which is 2 bytes (0xC3 0xA9), "cafe" has e which is 1 byte
-        // So distance is 2 (one deletion of 0xC3, one substitution of 0xA9 to 'e')
-        assert_eq!(
-            levenshtein_distance("café".as_bytes(), "cafe".as_bytes(), &mut cache),
-            2
-        );
-
-        // Emoji (🚀 is 4 bytes)
-        assert_eq!(
-            levenshtein_distance("🚀".as_bytes(), "x".as_bytes(), &mut cache),
-            4
-        );
-
-        // Same multi-byte character
-        assert_eq!(
-            levenshtein_distance("café".as_bytes(), "café".as_bytes(), &mut cache),
-            0
-        );
-    }
-
-    #[test]
-    fn test_fuzzy_prefix_match_basic() {
-        let mut cache = BufferCache::default();
-
-        // Exact prefix (distance 0)
-        assert_eq!(
-            is_fuzzy_prefix_match(b"hel", b"hello", 0, &mut cache),
-            Some(0)
-        );
-        assert_eq!(
-            is_fuzzy_prefix_match(b"hello", b"hello", 0, &mut cache),
-            Some(0)
-        );
-
-        // One edit (distance 1)
-        assert_eq!(
-            is_fuzzy_prefix_match(b"helo", b"hello", 1, &mut cache),
-            Some(1)
-        ); // Missing 'l'
-        assert_eq!(
-            is_fuzzy_prefix_match(b"hel", b"hello", 1, &mut cache),
-            Some(0)
-        ); // Exact match
-
-        // Too far (no match)
-        assert_eq!(
-            is_fuzzy_prefix_match(b"xyz", b"abc", 2, &mut cache),
-            None
-        );
-        assert_eq!(
-            is_fuzzy_prefix_match(b"hello", b"world", 2, &mut cache),
-            None
-        );
-
-        // Empty search term
-        assert_eq!(
-            is_fuzzy_prefix_match(b"", b"anything", 1, &mut cache),
-            Some(0)
-        );
-    }
-
-    #[test]
-    fn test_fuzzy_prefix_match_edge_cases() {
-        let mut cache = BufferCache::default();
-
-        // Search term longer than target
-        assert_eq!(
-            is_fuzzy_prefix_match(b"hello", b"hel", 1, &mut cache),
-            None
-        );
-
-        // Distance 2 allows more flexibility
-        assert_eq!(
-            is_fuzzy_prefix_match(b"helo", b"hello", 2, &mut cache),
-            Some(1)
-        );
-        assert_eq!(
-            is_fuzzy_prefix_match(b"hllo", b"hello", 2, &mut cache),
-            Some(1)
-        ); // Missing 'e'
-        assert_eq!(
-            is_fuzzy_prefix_match(b"hlo", b"hello", 2, &mut cache),
-            Some(2)
-        ); // Missing 'e' and 'l'
-    }
-
-    #[test]
     fn test_typo_tolerant_search_basic() {
         let mut tree = RadixTree::new();
         tree.insert("hello", 1);
@@ -2240,8 +1271,10 @@ mod tests {
         tree.insert("hero", 4);
 
         // Search with distance 1 - "helo" typo
-        let results: Vec<_> = tree.search_typo_tolerant("helo", 1)
-                .map(|(s, k, t)| (s, *k, t)).collect();
+        let results: Vec<_> = tree
+            .search_with_tolerance("helo", 1)
+            .map(|(s, k, t)| (s, *k, t))
+            .collect();
 
         // All words actually have distance 1 from "helo":
         // - "hell": hel matches, then distance("o", "") = 1
@@ -2249,12 +1282,15 @@ mod tests {
         // - "help": help matches, distance("helo", "help") = 1 (substitute 'o' with 'p')
         // - "hero": hero matches, distance("helo", "hero") = 1 (substitute 'l' with 'r')
         assert_eq!(results.len(), 4);
-        assert_eq!(results, vec![
-            ("hell".to_string(), 3, 1),
-            ("hello".to_string(), 1, 1),
-            ("help".to_string(), 2, 1),
-            ("hero".to_string(), 4, 1)
-        ]);
+        assert_eq!(
+            results,
+            vec![
+                ("hell".to_string(), 3, 1),
+                ("hello".to_string(), 1, 1),
+                ("help".to_string(), 2, 1),
+                ("hero".to_string(), 4, 1)
+            ]
+        );
     }
 
     #[test]
@@ -2265,7 +1301,7 @@ mod tests {
         tree.insert("temp", 3);
         tree.insert("team", 4);
 
-        let results: Vec<_> = tree.search_typo_tolerant("tex", 1).collect();
+        let results: Vec<_> = tree.search_with_tolerance("tex", 1).collect();
 
         // Results should be alphabetically ordered, not distance-ordered
         let keys: Vec<String> = results.iter().map(|(k, _, _)| k.clone()).collect();
@@ -2282,15 +1318,19 @@ mod tests {
         tree.insert("hell", 3);
 
         // Distance 0 should match exact prefixes only
-        let results: Vec<_> = tree.search_typo_tolerant("hel", 0)
+        let results: Vec<_> = tree
+            .search_with_tolerance("hel", 0)
             .map(|(s, k, t)| (s, *k, t))
             .collect();
 
-        assert_eq!(results, vec![
-            ("hell".to_string(), 3, 0),
-            ("hello".to_string(), 1, 0),
-            ("help".to_string(), 2, 0),
-        ]);
+        assert_eq!(
+            results,
+            vec![
+                ("hell".to_string(), 3, 0),
+                ("hello".to_string(), 1, 0),
+                ("help".to_string(), 2, 0),
+            ]
+        );
     }
 
     #[test]
@@ -2302,11 +1342,19 @@ mod tests {
 
         // Note: "café" has multi-byte chars, so byte-level distance may be > 1
         // Search for "caf" should match all with low distances
-        let results: Vec<_> = tree.search_typo_tolerant("caf", 1)
+        let results: Vec<_> = tree
+            .search_with_tolerance("caf", 1)
             .map(|(s, k, t)| (s, *k, t))
             .collect();
 
-        assert_eq!(results, vec![("café".to_string(), 1, 0), ("cake".to_string(), 2, 1), ("care".to_string(), 3, 1)]);
+        assert_eq!(
+            results,
+            vec![
+                ("café".to_string(), 1, 0),
+                ("cake".to_string(), 2, 1),
+                ("care".to_string(), 3, 1)
+            ]
+        );
     }
 
     #[test]
@@ -2317,13 +1365,19 @@ mod tests {
         tree.insert("abc", 3);
 
         // Empty search term should match all with distance 0
-        let results: Vec<_> = tree.search_typo_tolerant("", 1)
+        let results: Vec<_> = tree
+            .search_with_tolerance("", 1)
             .map(|(s, k, t)| (s, *k, t))
             .collect();
 
-        assert_eq!(results, vec![
-            ("a".to_string(), 1, 0), ("ab".to_string(), 2, 0), ("abc".to_string(), 3, 0)
-        ]);
+        assert_eq!(
+            results,
+            vec![
+                ("a".to_string(), 1, 0),
+                ("ab".to_string(), 2, 0),
+                ("abc".to_string(), 3, 0)
+            ]
+        );
     }
 
     #[test]
@@ -2332,7 +1386,7 @@ mod tests {
         tree.insert("hello", 1);
         tree.insert("world", 2);
 
-        let results: Vec<_> = tree.search_typo_tolerant("xyz", 1).collect();
+        let results: Vec<_> = tree.search_with_tolerance("xyz", 1).collect();
         assert_eq!(results.len(), 0);
     }
 
@@ -2340,11 +1394,11 @@ mod tests {
     fn test_typo_tolerant_search_iterator_lazy() {
         let mut tree = RadixTree::new();
         for i in 0..100 {
-            tree.insert(&format!("test{}", i), i);
+            tree.insert(&format!("test{i}"), i);
         }
 
         // Verify lazy evaluation - take only first 5
-        let mut iter = tree.search_typo_tolerant("tst", 1);
+        let mut iter = tree.search_with_tolerance("tst", 1);
         let first_five: Vec<_> = iter.by_ref().take(5).collect();
         assert_eq!(first_five.len(), 5);
 
@@ -2363,44 +1417,79 @@ mod tests {
         tree.insert("zz", 5);
 
         // Single character search
-        let results: Vec<_> = tree.search_typo_tolerant("a", 0)
+        let results: Vec<_> = tree
+            .search_with_tolerance("a", 0)
             .map(|(s, k, t)| (s, *k, t))
             .collect();
-        assert_eq!(results, vec![
-
-            ("a".to_string(), 1, 0), ("ab".to_string(), 2, 0), ("abc".to_string(), 3, 0), ("abcd".to_string(), 4, 0)
-
-        ]);
+        assert_eq!(
+            results,
+            vec![
+                ("a".to_string(), 1, 0),
+                ("ab".to_string(), 2, 0),
+                ("abc".to_string(), 3, 0),
+                ("abcd".to_string(), 4, 0)
+            ]
+        );
 
         // Search with distance allowing variations
-        let results: Vec<_> = tree.search_typo_tolerant("a", 1)
+        let results: Vec<_> = tree
+            .search_with_tolerance("a", 1)
             .map(|(s, k, t)| (s, *k, t))
             .collect();
-        assert_eq!(results, vec![
-            ("a".to_string(), 1, 0), ("ab".to_string(), 2, 0), ("abc".to_string(), 3, 0), ("abcd".to_string(), 4, 0), ("zz".to_string(), 5, 1)
-        ]);
+        assert_eq!(
+            results,
+            vec![
+                ("a".to_string(), 1, 0),
+                ("ab".to_string(), 2, 0),
+                ("abc".to_string(), 3, 0),
+                ("abcd".to_string(), 4, 0),
+                ("zz".to_string(), 5, 1)
+            ]
+        );
 
         // Search with distance allowing variations
-        let results: Vec<_> = tree.search_typo_tolerant("b", 1)
+        let results: Vec<_> = tree
+            .search_with_tolerance("b", 1)
             .map(|(s, k, t)| (s, *k, t))
             .collect();
-        assert_eq!(results, vec![
-            ("a".to_string(), 1, 1), ("ab".to_string(), 2, 1), ("abc".to_string(), 3, 1), ("abcd".to_string(), 4, 1), ("zz".to_string(), 5, 1)
-        ]);
+        assert_eq!(
+            results,
+            vec![
+                ("a".to_string(), 1, 1),
+                ("ab".to_string(), 2, 1),
+                ("abc".to_string(), 3, 1),
+                ("abcd".to_string(), 4, 1),
+                ("zz".to_string(), 5, 1)
+            ]
+        );
 
-        let results: Vec<_> = tree.search_typo_tolerant("bb", 1)
+        let results: Vec<_> = tree
+            .search_with_tolerance("bb", 1)
             .map(|(s, k, t)| (s, *k, t))
             .collect();
-        assert_eq!(results, vec![
-            ("ab".to_string(), 2, 1), ("abc".to_string(), 3, 1), ("abcd".to_string(), 4, 1)
-        ]);
+        assert_eq!(
+            results,
+            vec![
+                ("ab".to_string(), 2, 1),
+                ("abc".to_string(), 3, 1),
+                ("abcd".to_string(), 4, 1)
+            ]
+        );
 
-        let results: Vec<_> = tree.search_typo_tolerant("bb", 2)
+        let results: Vec<_> = tree
+            .search_with_tolerance("bb", 2)
             .map(|(s, k, t)| (s, *k, t))
             .collect();
-        assert_eq!(results, vec![
-            ("a".to_string(), 1, 2), ("ab".to_string(), 2, 1), ("abc".to_string(), 3, 1), ("abcd".to_string(), 4, 1), ("zz".to_string(), 5, 2)
-        ]);
+        assert_eq!(
+            results,
+            vec![
+                ("a".to_string(), 1, 2),
+                ("ab".to_string(), 2, 1),
+                ("abc".to_string(), 3, 1),
+                ("abcd".to_string(), 4, 1),
+                ("zz".to_string(), 5, 2)
+            ]
+        );
     }
 
     #[test]
@@ -2412,7 +1501,7 @@ mod tests {
         tree.insert("appropriate", 4);
 
         // Search with distance 2 for "aple" (missing 'p')
-        let results: Vec<_> = tree.search_typo_tolerant("aple", 2).collect();
+        let results: Vec<_> = tree.search_with_tolerance("aple", 2).collect();
 
         // Should find "apple" and possibly others
         assert!(results.iter().any(|(k, _, _)| k == "apple"));
@@ -2430,7 +1519,7 @@ mod tests {
         tree.insert("hell", 200);
         tree.insert("help", 300);
 
-        let results: Vec<_> = tree.search_typo_tolerant("helo", 1).collect();
+        let results: Vec<_> = tree.search_with_tolerance("helo", 1).collect();
 
         // Verify we get the correct values back
         // All three words have distance 1 from "helo"
@@ -2440,7 +1529,7 @@ mod tests {
                 "hello" => assert_eq!(**value, 100),
                 "hell" => assert_eq!(**value, 200),
                 "help" => assert_eq!(**value, 300),
-                _ => panic!("Unexpected key: {}", key),
+                _ => panic!("Unexpected key: {key}"),
             }
         }
     }
