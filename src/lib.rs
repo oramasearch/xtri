@@ -1564,18 +1564,9 @@ mod tests {
         let merged = tree1.merge(tree2, |v1, _| v1);
 
         assert_eq!(merged.len(), 2);
-        assert_eq!(
-            merged.search_prefix("hello", SearchMode::Exact)[0].1,
-            &1
-        );
-        assert_eq!(
-            merged.search_prefix("world", SearchMode::Exact)[0].1,
-            &2
-        );
-        assert_eq!(
-            merged.search_prefix("", SearchMode::Prefix).len(),
-            2
-        );
+        assert_eq!(merged.search_prefix("hello", SearchMode::Exact)[0].1, &1);
+        assert_eq!(merged.search_prefix("world", SearchMode::Exact)[0].1, &2);
+        assert_eq!(merged.search_prefix("", SearchMode::Prefix).len(), 2);
     }
 
     #[test]
@@ -1589,18 +1580,9 @@ mod tests {
         let merged = tree1.merge(tree2, |v1, _| v1);
 
         assert_eq!(merged.len(), 2);
-        assert_eq!(
-            merged.search_prefix("hello", SearchMode::Exact)[0].1,
-            &1
-        );
-        assert_eq!(
-            merged.search_prefix("world", SearchMode::Exact)[0].1,
-            &2
-        );
-        assert_eq!(
-            merged.search_prefix("", SearchMode::Prefix).len(),
-            2
-        );
+        assert_eq!(merged.search_prefix("hello", SearchMode::Exact)[0].1, &1);
+        assert_eq!(merged.search_prefix("world", SearchMode::Exact)[0].1, &2);
+        assert_eq!(merged.search_prefix("", SearchMode::Prefix).len(), 2);
     }
 
     #[test]
@@ -1616,26 +1598,11 @@ mod tests {
         let merged = tree1.merge(tree2, |v1, _| v1);
 
         assert_eq!(merged.len(), 4);
-        assert_eq!(
-            merged.search_prefix("aaa", SearchMode::Exact)[0].1,
-            &1
-        );
-        assert_eq!(
-            merged.search_prefix("zzz", SearchMode::Exact)[0].1,
-            &3
-        );
-        assert_eq!(
-            merged.search_prefix("zzy", SearchMode::Exact)[0].1,
-            &4
-        );
-        assert_eq!(
-            merged.search_prefix("aab", SearchMode::Exact)[0].1,
-            &2
-        );
-        assert_eq!(
-            merged.search_prefix("", SearchMode::Prefix).len(),
-            4
-        );
+        assert_eq!(merged.search_prefix("aaa", SearchMode::Exact)[0].1, &1);
+        assert_eq!(merged.search_prefix("zzz", SearchMode::Exact)[0].1, &3);
+        assert_eq!(merged.search_prefix("zzy", SearchMode::Exact)[0].1, &4);
+        assert_eq!(merged.search_prefix("aab", SearchMode::Exact)[0].1, &2);
+        assert_eq!(merged.search_prefix("", SearchMode::Prefix).len(), 4);
     }
 
     #[test]
@@ -1654,18 +1621,9 @@ mod tests {
         let results = merged.search_prefix("hello", SearchMode::Exact);
         assert_eq!(*results[0].1, 1); // Kept tree1's value
 
-        assert_eq!(
-            merged.search_prefix("he", SearchMode::Prefix).len(),
-            2
-        );
-        assert_eq!(
-            merged.search_prefix("w", SearchMode::Prefix).len(),
-            1
-        );
-        assert_eq!(
-            merged.search_prefix("", SearchMode::Prefix).len(),
-            3
-        );
+        assert_eq!(merged.search_prefix("he", SearchMode::Prefix).len(), 2);
+        assert_eq!(merged.search_prefix("w", SearchMode::Prefix).len(), 1);
+        assert_eq!(merged.search_prefix("", SearchMode::Prefix).len(), 3);
     }
 
     #[test]
@@ -1704,18 +1662,9 @@ mod tests {
         let results = merged.search_prefix("test", SearchMode::Prefix);
         assert_eq!(results.len(), 4);
 
-        assert_eq!(
-            merged.search_prefix("t", SearchMode::Prefix).len(),
-            4
-        );
-        assert_eq!(
-            merged.search_prefix("test", SearchMode::Prefix).len(),
-            4
-        );
-        assert_eq!(
-            merged.search_prefix("test", SearchMode::Exact).len(),
-            1
-        );
+        assert_eq!(merged.search_prefix("t", SearchMode::Prefix).len(), 4);
+        assert_eq!(merged.search_prefix("test", SearchMode::Prefix).len(), 4);
+        assert_eq!(merged.search_prefix("test", SearchMode::Exact).len(), 1);
     }
 
     #[test]
@@ -1731,14 +1680,8 @@ mod tests {
         let merged = tree1.merge(tree2, |_, v2| v2);
 
         assert_eq!(merged.len(), 3);
-        assert_eq!(
-            *merged.search_prefix("café", SearchMode::Exact)[0].1,
-            10
-        );
-        assert_eq!(
-            *merged.search_prefix("🚀", SearchMode::Exact)[0].1,
-            2
-        );
+        assert_eq!(*merged.search_prefix("café", SearchMode::Exact)[0].1, 10);
+        assert_eq!(*merged.search_prefix("🚀", SearchMode::Exact)[0].1, 2);
     }
 
     #[test]
@@ -1784,12 +1727,12 @@ mod tests {
     fn test_merge_large_trees() {
         let mut tree1 = RadixTree::new();
         for i in 0..100 {
-            tree1.insert(&format!("key_a_{:03}", i), i);
+            tree1.insert(&format!("key_a_{i:03}"), i);
         }
 
         let mut tree2 = RadixTree::new();
         for i in 0..100 {
-            tree2.insert(&format!("key_z_{:03}", i), i + 1000);
+            tree2.insert(&format!("key_z_{i:03}"), i + 1000);
         }
 
         let merged = tree1.merge(tree2, |v1, _| v1);
@@ -1798,15 +1741,11 @@ mod tests {
 
         // Spot check a few values
         assert_eq!(
-            *merged
-                .search_prefix("key_a_050", SearchMode::Exact)[0]
-                .1,
+            *merged.search_prefix("key_a_050", SearchMode::Exact)[0].1,
             50
         );
         assert_eq!(
-            *merged
-                .search_prefix("key_z_099", SearchMode::Exact)[0]
-                .1,
+            *merged.search_prefix("key_z_099", SearchMode::Exact)[0].1,
             1099
         );
     }
@@ -1828,12 +1767,7 @@ mod tests {
     #[cfg(feature = "parallel")]
     fn test_from_sorted_parallel_single_chunk() {
         // Test with less than chunk_size items (should still work)
-        let items = vec![
-            ("apple", 1),
-            ("banana", 2),
-            ("cherry", 3),
-            ("date", 4),
-        ];
+        let items = vec![("apple", 1), ("banana", 2), ("cherry", 3), ("date", 4)];
 
         let tree = RadixTree::from_sorted_parallel(items.clone(), Some(1000));
 
@@ -1849,9 +1783,21 @@ mod tests {
     fn test_from_sorted_parallel_multiple_chunks() {
         // Test with exactly 3 chunks of 5 items each
         let items = vec![
-            ("a01", 1), ("a02", 2), ("a03", 3), ("a04", 4), ("a05", 5),   // Chunk 1
-            ("b01", 6), ("b02", 7), ("b03", 8), ("b04", 9), ("b05", 10),  // Chunk 2
-            ("c01", 11), ("c02", 12), ("c03", 13), ("c04", 14), ("c05", 15), // Chunk 3
+            ("a01", 1),
+            ("a02", 2),
+            ("a03", 3),
+            ("a04", 4),
+            ("a05", 5), // Chunk 1
+            ("b01", 6),
+            ("b02", 7),
+            ("b03", 8),
+            ("b04", 9),
+            ("b05", 10), // Chunk 2
+            ("c01", 11),
+            ("c02", 12),
+            ("c03", 13),
+            ("c04", 14),
+            ("c05", 15), // Chunk 3
         ];
 
         let tree = RadixTree::from_sorted_parallel(items.clone(), Some(5));
@@ -1872,9 +1818,21 @@ mod tests {
         // Test with chunks that don't divide evenly (16 items, chunk_size=5)
         // This creates 4 chunks: [5, 5, 5, 1]
         let items = vec![
-            ("k01", 1), ("k02", 2), ("k03", 3), ("k04", 4), ("k05", 5),
-            ("k06", 6), ("k07", 7), ("k08", 8), ("k09", 9), ("k10", 10),
-            ("k11", 11), ("k12", 12), ("k13", 13), ("k14", 14), ("k15", 15),
+            ("k01", 1),
+            ("k02", 2),
+            ("k03", 3),
+            ("k04", 4),
+            ("k05", 5),
+            ("k06", 6),
+            ("k07", 7),
+            ("k08", 8),
+            ("k09", 9),
+            ("k10", 10),
+            ("k11", 11),
+            ("k12", 12),
+            ("k13", 13),
+            ("k14", 14),
+            ("k15", 15),
             ("k16", 16),
         ];
 
@@ -1884,7 +1842,10 @@ mod tests {
 
         // Verify correctness
         for (key, expected_value) in &items {
-            assert_eq!(*tree.search_prefix(key, SearchMode::Exact)[0].1, *expected_value);
+            assert_eq!(
+                *tree.search_prefix(key, SearchMode::Exact)[0].1,
+                *expected_value
+            );
         }
     }
 
@@ -1893,10 +1854,22 @@ mod tests {
     fn test_from_sorted_parallel_vs_sequential() {
         // Compare parallel build with sequential insertion
         let items = vec![
-            ("apple", 1), ("application", 2), ("apply", 3), ("apricot", 4),
-            ("banana", 5), ("band", 6), ("bandana", 7), ("bandit", 8),
-            ("cherry", 9), ("chess", 10), ("chest", 11), ("chestnut", 12),
-            ("date", 13), ("data", 14), ("database", 15), ("datastore", 16),
+            ("apple", 1),
+            ("application", 2),
+            ("apply", 3),
+            ("apricot", 4),
+            ("banana", 5),
+            ("band", 6),
+            ("bandana", 7),
+            ("bandit", 8),
+            ("cherry", 9),
+            ("chess", 10),
+            ("chest", 11),
+            ("chestnut", 12),
+            ("date", 13),
+            ("data", 14),
+            ("database", 15),
+            ("datastore", 16),
         ];
 
         // Build with parallel
@@ -1932,18 +1905,25 @@ mod tests {
     #[cfg(feature = "parallel")]
     fn test_from_sorted_parallel_large_dataset() {
         // Test with a larger dataset
-        let items: Vec<(String, usize)> = (0..1000)
-            .map(|i| (format!("key_{:08}", i), i))
-            .collect();
+        let items: Vec<(String, usize)> = (0..1000).map(|i| (format!("key_{i:08}"), i)).collect();
 
         let tree = RadixTree::from_sorted_parallel(items.clone(), Some(100));
 
         assert_eq!(tree.len(), 1000);
 
         // Spot check some values
-        assert_eq!(*tree.search_prefix("key_00000000", SearchMode::Exact)[0].1, 0);
-        assert_eq!(*tree.search_prefix("key_00000500", SearchMode::Exact)[0].1, 500);
-        assert_eq!(*tree.search_prefix("key_00000999", SearchMode::Exact)[0].1, 999);
+        assert_eq!(
+            *tree.search_prefix("key_00000000", SearchMode::Exact)[0].1,
+            0
+        );
+        assert_eq!(
+            *tree.search_prefix("key_00000500", SearchMode::Exact)[0].1,
+            500
+        );
+        assert_eq!(
+            *tree.search_prefix("key_00000999", SearchMode::Exact)[0].1,
+            999
+        );
 
         // Verify prefix search works
         let prefix_results = tree.search_prefix("key_0000050", SearchMode::Prefix);
@@ -1954,15 +1934,16 @@ mod tests {
     #[cfg(feature = "parallel")]
     fn test_from_sorted_parallel_default_chunk_size() {
         // Test with default chunk_size (None)
-        let items = vec![
-            ("a", 1), ("b", 2), ("c", 3), ("d", 4), ("e", 5),
-        ];
+        let items = vec![("a", 1), ("b", 2), ("c", 3), ("d", 4), ("e", 5)];
 
         let tree = RadixTree::from_sorted_parallel(items.clone(), None);
 
         assert_eq!(tree.len(), 5);
         for (key, expected_value) in &items {
-            assert_eq!(*tree.search_prefix(key, SearchMode::Exact)[0].1, *expected_value);
+            assert_eq!(
+                *tree.search_prefix(key, SearchMode::Exact)[0].1,
+                *expected_value
+            );
         }
     }
 

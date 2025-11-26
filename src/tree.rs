@@ -1,3 +1,5 @@
+use std::cmp::Ordering;
+
 use serde::Serialize;
 
 use crate::{LeavesIterator, SearchIterator, SearchMode, TypoTolerantSearchIterator};
@@ -446,8 +448,8 @@ impl<T> RadixTree<T> {
     /// # Arguments
     /// * `other` - The tree to merge (consumed)
     /// * `conflict_fn` - Resolves value conflicts when both trees have a value
-    ///                   at the same key. Receives (self_value, other_value) and
-    ///                   returns the value to keep.
+    ///   at the same key. Receives (self_value, other_value) and
+    ///   returns the value to keep.
     ///
     /// # Returns
     /// The merged tree
@@ -539,9 +541,7 @@ impl<T> RadixTree<T> {
         }
 
         let chunk_size = chunk_size.unwrap_or(1000);
-        let trees: Vec<_> = items.par_chunks(chunk_size)
-            .map(build_tree)
-            .collect();
+        let trees: Vec<_> = items.par_chunks(chunk_size).map(build_tree).collect();
 
         // Tournament-style merge
         tournament_merge(trees)
@@ -597,16 +597,20 @@ where
                 break;
             }
             (Some(&(byte1, _)), Some(&(byte2, _))) => {
-                if byte1 < byte2 {
-                    result.push(iter1.next().unwrap());
-                } else if byte2 < byte1 {
-                    result.push(iter2.next().unwrap());
-                } else {
-                    // Same byte - merge recursively
-                    let (b1, node1) = iter1.next().unwrap();
-                    let (_, node2) = iter2.next().unwrap();
-                    let merged = merge_nodes(node1, node2, conflict_fn);
-                    result.push((b1, merged));
+                match byte1.cmp(&byte2) {
+                    Ordering::Less => {
+                        result.push(iter1.next().unwrap());
+                    }
+                    Ordering::Greater => {
+                        result.push(iter2.next().unwrap());
+                    }
+                    Ordering::Equal => {
+                        // Same byte - merge recursively
+                        let (b1, node1) = iter1.next().unwrap();
+                        let (_, node2) = iter2.next().unwrap();
+                        let merged = merge_nodes(node1, node2, conflict_fn);
+                        result.push((b1, merged));
+                    }
                 }
             }
         }
@@ -713,7 +717,7 @@ fn tournament_merge<T: Send>(mut trees: Vec<RadixTree<T>>) -> RadixTree<T> {
         let tree_count = trees.len();
 
         // Convert Vec into chunks and process pairs in parallel
-        let mut next_round = Vec::with_capacity((tree_count + 1) / 2);
+        let mut next_round = Vec::with_capacity(tree_count.div_ceil(2));
         let mut trees_iter = trees.into_iter();
         let mut pairs = Vec::new();
 

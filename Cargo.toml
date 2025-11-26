@@ -29,9 +29,5 @@ rand = "0.8"
 name = "benchmarks"
 harness = false
 
-[[bench]]
-name = "insert"
-harness = false
-
 [lints.clippy]
 needless_doctest_main = "allow"

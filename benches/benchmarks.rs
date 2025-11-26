@@ -137,16 +137,14 @@ fn benchmark_merge(c: &mut Criterion) {
                 let mut tree2 = RadixTree::new();
 
                 for i in 0..1000 {
-                    tree1.insert(&format!("a_{:08}", i), i);
-                    tree2.insert(&format!("z_{:08}", i), i + 1000);
+                    tree1.insert(&format!("a_{i:08}"), i);
+                    tree2.insert(&format!("z_{i:08}"), i + 1000);
                 }
 
                 (tree1, tree2)
             },
-            |(tree1, tree2)| {
-                black_box(tree1.merge(tree2, |_, v2| v2))
-            },
-            criterion::BatchSize::SmallInput
+            |(tree1, tree2)| black_box(tree1.merge(tree2, |_, v2| v2)),
+            criterion::BatchSize::SmallInput,
         )
     });
 
@@ -158,16 +156,14 @@ fn benchmark_merge(c: &mut Criterion) {
                 let mut tree2 = RadixTree::new();
 
                 for i in 0..500 {
-                    tree1.insert(&format!("key_{:08}", i), i);
+                    tree1.insert(&format!("key_{i:08}"), i);
                     tree2.insert(&format!("key_{:08}", i + 250), i + 1000);
                 }
 
                 (tree1, tree2)
             },
-            |(tree1, tree2)| {
-                black_box(tree1.merge(tree2, |v1, _| v1))
-            },
-            criterion::BatchSize::SmallInput
+            |(tree1, tree2)| black_box(tree1.merge(tree2, |v1, _| v1)),
+            criterion::BatchSize::SmallInput,
         )
     });
 }
@@ -183,37 +179,27 @@ fn benchmark_parallel_build(c: &mut Criterion) {
         let mut group = c.benchmark_group("sorted_insertion");
 
         // Sequential insertion
-        group.bench_with_input(
-            BenchmarkId::new("sequential", size),
-            &size,
-            |b, &size| {
-                let items: Vec<_> = (0..size)
-                    .map(|i| (format!("key_{:08}", i), i))
-                    .collect();
+        group.bench_with_input(BenchmarkId::new("sequential", size), &size, |b, &size| {
+            let items: Vec<_> = (0..size).map(|i| (format!("key_{i:08}"), i)).collect();
 
-                b.iter(|| {
-                    let mut tree = RadixTree::new();
-                    for (k, v) in &items {
-                        tree.insert(k, *v);
-                    }
-                    black_box(tree)
-                })
-            }
-        );
+            b.iter(|| {
+                let mut tree = RadixTree::new();
+                for (k, v) in &items {
+                    tree.insert(k, *v);
+                }
+                black_box(tree)
+            })
+        });
 
         // Parallel build with default chunk size
         group.bench_with_input(
             BenchmarkId::new("parallel_default", size),
             &size,
             |b, &size| {
-                let items: Vec<_> = (0..size)
-                    .map(|i| (format!("key_{:08}", i), i))
-                    .collect();
+                let items: Vec<_> = (0..size).map(|i| (format!("key_{i:08}"), i)).collect();
 
-                b.iter(|| {
-                    black_box(RadixTree::from_sorted_parallel(items.clone(), None))
-                })
-            }
+                b.iter(|| black_box(RadixTree::from_sorted_parallel(items.clone(), None)))
+            },
         );
 
         // Parallel build with 500 chunk size
@@ -221,14 +207,10 @@ fn benchmark_parallel_build(c: &mut Criterion) {
             BenchmarkId::new("parallel_chunk_500", size),
             &size,
             |b, &size| {
-                let items: Vec<_> = (0..size)
-                    .map(|i| (format!("key_{:08}", i), i))
-                    .collect();
+                let items: Vec<_> = (0..size).map(|i| (format!("key_{i:08}"), i)).collect();
 
-                b.iter(|| {
-                    black_box(RadixTree::from_sorted_parallel(items.clone(), Some(500)))
-                })
-            }
+                b.iter(|| black_box(RadixTree::from_sorted_parallel(items.clone(), Some(500))))
+            },
         );
 
         // Parallel build with 2000 chunk size
@@ -236,14 +218,10 @@ fn benchmark_parallel_build(c: &mut Criterion) {
             BenchmarkId::new("parallel_chunk_2000", size),
             &size,
             |b, &size| {
-                let items: Vec<_> = (0..size)
-                    .map(|i| (format!("key_{:08}", i), i))
-                    .collect();
+                let items: Vec<_> = (0..size).map(|i| (format!("key_{i:08}"), i)).collect();
 
-                b.iter(|| {
-                    black_box(RadixTree::from_sorted_parallel(items.clone(), Some(2000)))
-                })
-            }
+                b.iter(|| black_box(RadixTree::from_sorted_parallel(items.clone(), Some(2000))))
+            },
         );
 
         group.finish();
