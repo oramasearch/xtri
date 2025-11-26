@@ -128,5 +128,143 @@ fn benchmark_search_iter(c: &mut Criterion) {
     });
 }
 
-criterion_group!(benches, benchmark_insertion, benchmark_search_iter);
+fn benchmark_merge(c: &mut Criterion) {
+    c.bench_function("merge_two_1000_trees", |b| {
+        b.iter_batched(
+            || {
+                // Setup: Create two trees with 1000 items each
+                let mut tree1 = RadixTree::new();
+                let mut tree2 = RadixTree::new();
+
+                for i in 0..1000 {
+                    tree1.insert(&format!("a_{:08}", i), i);
+                    tree2.insert(&format!("z_{:08}", i), i + 1000);
+                }
+
+                (tree1, tree2)
+            },
+            |(tree1, tree2)| {
+                black_box(tree1.merge(tree2, |_, v2| v2))
+            },
+            criterion::BatchSize::SmallInput
+        )
+    });
+
+    c.bench_function("merge_overlapping_500_trees", |b| {
+        b.iter_batched(
+            || {
+                // Setup: Create two trees with overlapping keys
+                let mut tree1 = RadixTree::new();
+                let mut tree2 = RadixTree::new();
+
+                for i in 0..500 {
+                    tree1.insert(&format!("key_{:08}", i), i);
+                    tree2.insert(&format!("key_{:08}", i + 250), i + 1000);
+                }
+
+                (tree1, tree2)
+            },
+            |(tree1, tree2)| {
+                black_box(tree1.merge(tree2, |v1, _| v1))
+            },
+            criterion::BatchSize::SmallInput
+        )
+    });
+}
+
+#[cfg(feature = "parallel")]
+fn benchmark_parallel_build(c: &mut Criterion) {
+    use criterion::BenchmarkId;
+
+    // Compare sequential vs parallel for different sizes
+    let sizes = vec![1000, 5000, 10000];
+
+    for size in sizes {
+        let mut group = c.benchmark_group("sorted_insertion");
+
+        // Sequential insertion
+        group.bench_with_input(
+            BenchmarkId::new("sequential", size),
+            &size,
+            |b, &size| {
+                let items: Vec<_> = (0..size)
+                    .map(|i| (format!("key_{:08}", i), i))
+                    .collect();
+
+                b.iter(|| {
+                    let mut tree = RadixTree::new();
+                    for (k, v) in &items {
+                        tree.insert(k, *v);
+                    }
+                    black_box(tree)
+                })
+            }
+        );
+
+        // Parallel build with default chunk size
+        group.bench_with_input(
+            BenchmarkId::new("parallel_default", size),
+            &size,
+            |b, &size| {
+                let items: Vec<_> = (0..size)
+                    .map(|i| (format!("key_{:08}", i), i))
+                    .collect();
+
+                b.iter(|| {
+                    black_box(RadixTree::from_sorted_parallel(items.clone(), None))
+                })
+            }
+        );
+
+        // Parallel build with 500 chunk size
+        group.bench_with_input(
+            BenchmarkId::new("parallel_chunk_500", size),
+            &size,
+            |b, &size| {
+                let items: Vec<_> = (0..size)
+                    .map(|i| (format!("key_{:08}", i), i))
+                    .collect();
+
+                b.iter(|| {
+                    black_box(RadixTree::from_sorted_parallel(items.clone(), Some(500)))
+                })
+            }
+        );
+
+        // Parallel build with 2000 chunk size
+        group.bench_with_input(
+            BenchmarkId::new("parallel_chunk_2000", size),
+            &size,
+            |b, &size| {
+                let items: Vec<_> = (0..size)
+                    .map(|i| (format!("key_{:08}", i), i))
+                    .collect();
+
+                b.iter(|| {
+                    black_box(RadixTree::from_sorted_parallel(items.clone(), Some(2000)))
+                })
+            }
+        );
+
+        group.finish();
+    }
+}
+
+#[cfg(feature = "parallel")]
+criterion_group!(
+    benches,
+    benchmark_insertion,
+    benchmark_search_iter,
+    benchmark_merge,
+    benchmark_parallel_build
+);
+
+#[cfg(not(feature = "parallel"))]
+criterion_group!(
+    benches,
+    benchmark_insertion,
+    benchmark_search_iter,
+    benchmark_merge
+);
+
 criterion_main!(benches);

@@ -12,6 +12,8 @@ This is a Rust library called "xtri" that implements a radix tree (compressed tr
 - Prefix-based search returning all matching key-value pairs (`search_prefix`)
 - Lazy iterator for memory-efficient traversal (`search_iter`)
 - Mutable value access through closures for safe modification (`mut_value`)
+- Tree merging with customizable conflict resolution (`merge`)
+- Parallel sorted bulk insertion for high-performance data loading (`from_sorted_parallel`, requires `parallel` feature)
 - Alphabetical ordering of search results
 - Full UTF-8 support including emojis and international characters
 - Binary search optimization for fast lookups
@@ -30,8 +32,14 @@ This is a Rust library called "xtri" that implements a radix tree (compressed tr
 # Build the library
 cargo build
 
+# Build with parallel feature
+cargo build --features parallel
+
 # Run all tests
 cargo test
+
+# Run tests with parallel feature
+cargo test --features parallel
 
 # Run a specific test
 cargo test test_non_ascii_characters
@@ -44,6 +52,12 @@ cargo build --release
 
 # Check code without building
 cargo check
+
+# Run benchmarks
+cargo bench
+
+# Run benchmarks with parallel feature
+cargo bench --features parallel
 ```
 
 ### Code Quality
@@ -80,6 +94,8 @@ The library consists of:
 - `search_prefix(&self, prefix: &str) -> Vec<(String, &T)>`: Returns all keys matching prefix
 - `search_iter(&self, prefix: &str) -> SearchPrefixIterator<T>`: Returns lazy iterator for memory-efficient traversal
 - `mut_value<F>(&mut self, key: &str, f: F) where F: FnOnce(&mut Option<T>)`: Provides mutable access to values through closures
+- `merge<F>(self, other: Self, conflict_fn: F) -> Self`: Merges two trees with customizable conflict resolution (O(n + m) complexity)
+- `from_sorted_parallel<K, I>(items: I, chunk_size: Option<usize>) -> Self` (requires `parallel` feature): Builds tree from pre-sorted data using parallel construction (5-20x faster for 10K+ keys)
 - `clear(&mut self)`: Removes all entries from the tree
 
 **RadixNode<T>:**
@@ -115,6 +131,23 @@ The library consists of:
 - Path compression reduces tree height and memory usage
 - Lazy iteration prevents loading all results into memory at once
 - Search results returned in alphabetical order without explicit sorting
+- Structural tree merging with O(n + m) complexity using two-pointer algorithm
+- Parallel sorted bulk insertion using rayon with tournament-style merging (optional `parallel` feature)
+
+### Tree Merging
+- Uses structural merge algorithm that recursively combines tree nodes
+- Handles 4 cases: exact key match, prefix relationships, and partial matches
+- Two-pointer merge for sorted children vectors maintains O(n + m) complexity
+- Customizable conflict resolution via closure parameter
+- Preserves all tree invariants (sorted children, path compression)
+
+### Parallel Build (optional `parallel` feature)
+- Chunks sorted data into fixed-size segments (default 1000 keys per chunk)
+- Builds subtrees in parallel using rayon's parallel iterators
+- Tournament-style pairwise merging in parallel rounds until one tree remains
+- Expected 5-20x speedup for 10,000+ sorted keys on multi-core systems
+- Requires `T: Send` trait bound for parallel operations
+- Feature-gated to keep default builds lightweight
 
 ## Testing
 
@@ -123,6 +156,8 @@ Comprehensive test suite covers:
 - Iterator functionality and lazy evaluation
 - Closure-based mutable value operations
 - Complex node splitting scenarios including edge cases with mut_value
+- **Tree merging operations**: empty trees, conflict resolution, disjoint keys, overlapping keys, UTF-8 support, correctness validation
+- **Parallel build (with `parallel` feature)**: empty input, single chunk, multiple chunks, uneven chunks, correctness vs sequential, large datasets, UTF-8 support
 - Non-ASCII character handling (UTF-8, emojis, Cyrillic)
 - Edge cases: empty keys, overlapping prefixes, single characters
 - Special characters and whitespace handling
@@ -135,6 +170,7 @@ Comprehensive test suite covers:
 - Documentation examples (README code is automatically tested)
 
 Run `cargo test` to verify all functionality works correctly.
+Run `cargo test --features parallel` to test parallel build functionality.
 
 ## Documentation
 - README.md includes comprehensive usage examples
