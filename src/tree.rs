@@ -541,7 +541,13 @@ impl<T> RadixTree<T> {
         }
 
         let chunk_size = chunk_size.unwrap_or(1000);
-        let trees: Vec<_> = items.par_chunks(chunk_size).map(build_tree).collect();
+        if items.len() < chunk_size {
+            return build_tree(&items);
+        }
+
+        let trees: Vec<_> = items.par_chunks(chunk_size)
+            .map(build_tree)
+            .collect();
 
         // Tournament-style merge
         tournament_merge(trees)
