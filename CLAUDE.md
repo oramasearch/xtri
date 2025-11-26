@@ -95,7 +95,7 @@ The library consists of:
 - `search_iter(&self, prefix: &str) -> SearchPrefixIterator<T>`: Returns lazy iterator for memory-efficient traversal
 - `mut_value<F>(&mut self, key: &str, f: F) where F: FnOnce(&mut Option<T>)`: Provides mutable access to values through closures
 - `merge<F>(self, other: Self, conflict_fn: F) -> Self`: Merges two trees with customizable conflict resolution (O(n + m) complexity)
-- `from_sorted_parallel<K, I>(items: I, chunk_size: Option<usize>) -> Self` (requires `parallel` feature): Builds tree from pre-sorted data using parallel construction (5-20x faster for 10K+ keys)
+- `from_sorted_parallel<K>(items: Vec<(K, T)>, chunk_size: Option<usize>) -> Self` (requires `parallel` feature): Builds tree from pre-sorted data using parallel construction (5-20x faster for 10K+ keys)
 - `clear(&mut self)`: Removes all entries from the tree
 
 **RadixNode<T>:**

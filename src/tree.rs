@@ -490,7 +490,7 @@ impl<T> RadixTree<T> {
     /// - Requires the `parallel` feature to be enabled
     ///
     /// # Arguments
-    /// * `items` - Sorted iterator of (key, value) pairs
+    /// * `items` - Sorted vector of (key, value) pairs
     /// * `chunk_size` - Keys per subtree (default: 1000). Tune based on your data.
     ///
     /// # Performance
@@ -510,52 +510,37 @@ impl<T> RadixTree<T> {
     /// let tree = RadixTree::from_sorted_parallel(sorted_data, None);
     /// ```
     #[cfg(feature = "parallel")]
-    pub fn from_sorted_parallel<K, I>(items: I, chunk_size: Option<usize>) -> Self
+    pub fn from_sorted_parallel<K>(items: Vec<(K, T)>, chunk_size: Option<usize>) -> Self
     where
-        K: AsRef<str>,
-        I: IntoIterator<Item = (K, T)>,
-        T: Send,
+        K: AsRef<str> + Send + Sync,
+        T: Send + Sync + Clone + Copy + Sized,
     {
         use rayon::prelude::*;
 
-        let chunk_size = chunk_size.unwrap_or(1000);
-        // Convert to owned strings for parallelization
-        let items: Vec<(String, T)> = items
-            .into_iter()
-            .map(|(k, v)| (k.as_ref().to_string(), v))
-            .collect();
+        #[cfg(not(debug_assertions))]
+        {
+            assert!(items.is_sorted_by_key(|k| k.0.as_ref()))
+        }
 
         if items.is_empty() {
             return RadixTree::new();
         }
 
-        // Split into chunks for parallel processing
-        let mut chunks: Vec<Vec<(String, T)>> = Vec::new();
-        let mut current_chunk = Vec::with_capacity(chunk_size);
-
-        for item in items {
-            current_chunk.push(item);
-            if current_chunk.len() >= chunk_size {
-                chunks.push(std::mem::replace(
-                    &mut current_chunk,
-                    Vec::with_capacity(chunk_size),
-                ));
+        fn build_tree<K, T>(chunk: &[(K, T)]) -> RadixTree<T>
+        where
+            K: AsRef<str> + Send + Sync,
+            T: Send + Sync + Clone + Copy,
+        {
+            let mut tree = RadixTree::new();
+            for (key, value) in chunk {
+                tree.insert(key.as_ref(), *value);
             }
-        }
-        if !current_chunk.is_empty() {
-            chunks.push(current_chunk);
+            tree
         }
 
-        // Build trees in parallel using rayon
-        let trees: Vec<RadixTree<T>> = chunks
-            .into_par_iter()
-            .map(|chunk| {
-                let mut tree = RadixTree::new();
-                for (key, value) in chunk {
-                    tree.insert(&key, value);
-                }
-                tree
-            })
+        let chunk_size = chunk_size.unwrap_or(1000);
+        let trees: Vec<_> = items.par_chunks(chunk_size)
+            .map(build_tree)
             .collect();
 
         // Tournament-style merge
@@ -564,7 +549,13 @@ impl<T> RadixTree<T> {
 }
 
 pub fn common_prefix_length(a: &[u8], b: &[u8]) -> usize {
-    a.iter().zip(b.iter()).take_while(|(x, y)| x == y).count()
+    let min = a.len().min(b.len());
+    for i in 0..min {
+        if a[i] != b[i] {
+            return i;
+        }
+    }
+    min
 }
 
 /// Merges values from two nodes, using the conflict function when both have values.
