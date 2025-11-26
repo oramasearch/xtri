@@ -286,11 +286,11 @@ impl<T> RadixTree<T> {
     where
         F: FnOnce(&mut Option<T>) -> R,
     {
-        let key_bytes = key.as_bytes().to_vec();
+        let key_bytes = key.as_bytes();
         Self::mut_value_recursive(&mut self.root, key_bytes, f)
     }
 
-    fn mut_value_recursive<F, R>(node: &mut RadixNode<T>, key: Vec<u8>, f: F) -> R
+    fn mut_value_recursive<F, R>(node: &mut RadixNode<T>, key: &[u8], f: F) -> R
     where
         F: FnOnce(&mut Option<T>) -> R,
     {
@@ -307,27 +307,26 @@ impl<T> RadixTree<T> {
             .binary_search_by_key(&first_byte, |(byte, _)| *byte)
         {
             let (_, child) = &mut node.children[index];
-            let common_len = common_prefix_length(&child.key, &key);
+            let common_len = common_prefix_length(&child.key, key);
 
             if common_len == child.key.len() {
                 // Child's key is fully consumed, continue with remaining key
-                let remaining_key = key[common_len..].to_vec();
-                Self::mut_value_recursive(child, remaining_key, f)
-            } else if common_len == key.len() && child.key.starts_with(&key) {
+                Self::mut_value_recursive(child, &key[common_len..], f)
+            } else if common_len == key.len() && child.key.starts_with(key) {
                 // The key is a prefix of the child's key - need to split the child
                 let old_key = child.key.clone();
                 let old_value = child.value.take();
                 let old_children = std::mem::take(&mut child.children);
 
                 // Set the child to represent our key
-                child.key = key.clone();
+                child.key = key.to_vec();
                 child.value = None;
 
                 // Create new child for the remainder of the old key
-                let remaining_key = old_key[key.len()..].to_vec();
+                let remaining_key = &old_key[key.len()..];
                 if !remaining_key.is_empty() {
                     let remaining_first_byte = remaining_key[0];
-                    let mut remaining_node = RadixNode::new_with_key(remaining_key);
+                    let mut remaining_node = RadixNode::new_with_key(remaining_key.to_vec());
                     remaining_node.value = old_value;
                     remaining_node.children = old_children;
                     child.children.push((remaining_first_byte, remaining_node));
@@ -350,24 +349,24 @@ impl<T> RadixTree<T> {
                 child.children.clear();
 
                 // Create node for old path
-                let old_remaining_key = old_key[common_len..].to_vec();
+                let old_remaining_key = &old_key[common_len..];
                 if !old_remaining_key.is_empty() {
                     let old_first_byte = old_remaining_key[0];
-                    let mut old_node = RadixNode::new_with_key(old_remaining_key);
+                    let mut old_node = RadixNode::new_with_key(old_remaining_key.to_vec());
                     old_node.value = old_value;
                     old_node.children = old_children;
                     child.children.push((old_first_byte, old_node));
                 }
 
                 // Create node for new path
-                let new_remaining_key = key[common_len..].to_vec();
+                let new_remaining_key = &key[common_len..];
                 if new_remaining_key.is_empty() {
                     // The key ends at the split point
                     child.children.sort_by_key(|(byte, _)| *byte);
                     return f(&mut child.value);
                 } else {
                     let new_first_byte = new_remaining_key[0];
-                    let mut new_node = RadixNode::new_with_key(new_remaining_key);
+                    let mut new_node = RadixNode::new_with_key(new_remaining_key.to_vec());
                     new_node.value = None;
                     child.children.push((new_first_byte, new_node));
                     child.children.sort_by_key(|(byte, _)| *byte);
@@ -382,7 +381,7 @@ impl<T> RadixTree<T> {
             }
         } else {
             // No existing child - create new one
-            let mut new_child = RadixNode::new_with_key(key);
+            let mut new_child = RadixNode::new_with_key(key.to_vec());
             new_child.value = None;
             node.children.push((first_byte, new_child));
             node.children.sort_by_key(|(byte, _)| *byte);
@@ -545,9 +544,7 @@ impl<T> RadixTree<T> {
             return build_tree(&items);
         }
 
-        let trees: Vec<_> = items.par_chunks(chunk_size)
-            .map(build_tree)
-            .collect();
+        let trees: Vec<_> = items.par_chunks(chunk_size).map(build_tree).collect();
 
         // Tournament-style merge
         tournament_merge(trees)
